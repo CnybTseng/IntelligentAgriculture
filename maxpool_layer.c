@@ -45,6 +45,16 @@ void free_maxpool_layer(maxpool_layer *layer)
 	layer = NULL;
 }
 
+void forward_maxpool_layer(maxpool_layer *layer, convnet *net)
+{
+	
+}
+
+void backward_maxpool_layer(maxpool_layer *layer, convnet *net)
+{
+	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+}
+
 int maxpool_output_width(maxpool_layer *layer)
 {
 	return (layer->input_size.w - layer->filter_size + layer->padding) / layer->stride + 1;
