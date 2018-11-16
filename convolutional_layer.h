@@ -1,0 +1,22 @@
+#ifndef _CONVOLUTIONAL_LAYER_H_
+#define _CONVOLUTIONAL_LAYER_H_
+
+#include "convnet.h"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+void forward_convolutional_layer(convolutional_layer *layer, convnet *net);
+void backward_convolutional_layer(convolutional_layer *layer, convnet *net);
+int convolutional_output_width(convolutional_layer *layer);
+int convolutional_output_height(convolutional_layer *layer);
+void add_bias(float *output, float *biases, int batch_size, int nchannels, int size);
+void mul_bias(float *output, float *scales, int batch_size, int nchannels, int size);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
