@@ -5,12 +5,12 @@
 #include "im2col.h"
 #include "gemm.h"
 
-void *make_convolution_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
-                             int stride, int padding, int batch_size, int batch_norm, dim3 *output_size)
+void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
+                               int stride, int padding, int batch_size, int batch_norm, dim3 *output_size)
 {
 	convolutional_layer *layer = calloc(1, sizeof(convolutional_layer));
 	if (!layer) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		return layer;
 	}
 	
@@ -46,43 +46,43 @@ void *make_convolution_layer(ACTIVATION activation, dim3 input_size, int filter_
 	
 	layer->weights = calloc(layer->nweights, sizeof(float));
 	if (!layer->weights) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
 	layer->scales = calloc(nfilters, sizeof(float));
 	if (!layer->scales) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
 	layer->biases = calloc(layer->nbiases, sizeof(float));
 	if (!layer->biases) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
 	layer->rolling_mean = calloc(nfilters, sizeof(float));
 	if (!layer->rolling_mean) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
 	layer->rolling_variance = calloc(nfilters, sizeof(float));
 	if (!layer->rolling_variance) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
 	layer->vecmat = calloc(layer->vmsize, sizeof(float));
 	if (!layer->vecmat) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
 	if (!layer->output) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		cleanup:free_convolution_layer(layer);
 	}
 	
@@ -135,7 +135,8 @@ void free_convolution_layer(convolutional_layer *layer)
 void forward_convolutional_layer(convolutional_layer *layer, convnet *net)
 {
 	float alpha = 0;
-	mset(layer->output, layer->noutputs * layer->batch_size, "float", &alpha);
+	size_t size = layer->noutputs * layer->batch_size * sizeof(float);
+	mset((char *const)layer->output, size, (const char *const)&alpha, sizeof(float));
 	
 	int m = layer->nfilters;
 	int n = layer->output_size.w * layer->output_size.h;

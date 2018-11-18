@@ -8,7 +8,8 @@ extern "C"
 {
 #endif
 
-void *make_yolo_layer();
+void forward_yolo_layer(yolo_layer *layer, convnet *net);
+void backward_yolo_layer(yolo_layer *layer, convnet *net);
 
 #ifdef __cplusplus
 }

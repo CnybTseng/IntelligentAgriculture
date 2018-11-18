@@ -1,3 +1,4 @@
+#include <float.h>
 #include "maxpool_layer.h"
 
 void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int padding, int batch_size,
@@ -5,7 +6,7 @@ void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int paddi
 {
 	maxpool_layer *layer = calloc(1, sizeof(maxpool_layer));
 	if (!layer) {
-		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		return layer;
 	}
 	
@@ -28,6 +29,10 @@ void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int paddi
 	}
 	
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
+	if (!layer->output) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		free_maxpool_layer(layer);
+	}
 	
 	return (void *)layer;
 }					 
@@ -47,7 +52,39 @@ void free_maxpool_layer(maxpool_layer *layer)
 
 void forward_maxpool_layer(maxpool_layer *layer, convnet *net)
 {
+	int offsetx = -layer->padding / 2;
+	int offsety = -layer->padding / 2;
+	int inwh = layer->input_size.w * layer->input_size.h;
+	int outwh = layer->output_size.w * layer->output_size.h;
 	
+	for (int b = 0; b < layer->batch_size; ++b) {
+		for (int c = 0; c < layer->output_size.c; ++c) {
+			int dslice = (b * layer->output_size.c + c) * outwh;
+			int dslice0 = (b * layer->input_size.c + c) * inwh;
+			for (int y = 0; y < layer->output_size.h; ++y) {
+				for (int x = 0; x < layer->output_size.w; ++x) {
+					int maxidx = -1;
+					float maxval = -FLT_MAX;
+					for (int dy = 0; dy < layer->filter_size; ++dy) {
+						for (int dx = 0; dx < layer->filter_size; ++dx) {
+							int x0 = x * layer->stride + dx + offsetx;
+							int y0 = y * layer->stride + dy + offsety;
+							int idx0 = dslice0 + y0 * layer->input_size.w + x0;
+							int valid = x0 > -1 && x0 < layer->input_size.w &&
+								y0 > -1 && y0 < layer->input_size.h;
+							float val = valid ? layer->input[idx0] : -FLT_MAX;
+							int bigger = val > maxval;
+							maxidx = bigger ? idx0 : maxidx;
+							maxval = bigger ? val : maxval;
+						}
+					}
+					
+					int idx = dslice + y * layer->output_size.w + x;
+					layer->output[idx] = maxval;
+				}
+			}
+		}
+	}
 }
 
 void backward_maxpool_layer(maxpool_layer *layer, convnet *net)

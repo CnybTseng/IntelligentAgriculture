@@ -8,7 +8,8 @@ extern "C"
 {
 #endif
 
-void *make_route_layer();
+void forward_route_layer(route_layer *layer, convnet *net);
+void backward_route_layer(route_layer *layer, convnet *net);
 
 #ifdef __cplusplus
 }

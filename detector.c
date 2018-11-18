@@ -6,12 +6,18 @@
 #include "zutils.h"
 #include "gemm.h"
 #include "activation.h"
+#include "convolutional_layer.h"
+#include "maxpool_layer.h"
 
 void test_multi_free(int argc, char *argv[]);
 void test_convnet(int argc, char *argv[]);
 void test_im2col(int argc, char *argv[]);
 void test_gemm(int argc, char *argv[]);
 void test_activate(int argc, char *argv[]);
+void test_convolutional_layer(int argc, char *argv[]);
+void test_maxpool_layer(int argc, char *argv[]);
+void test_mset(int argc, char *argv[]);
+void test_mcopy(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
@@ -42,48 +48,86 @@ void test_multi_free(int argc, char *argv[])
 
 void test_convnet(int argc, char *argv[])
 {	
-	void *layers[16];
+	void *layers[24];
 	int nlayers = sizeof(layers) / sizeof(layers[0]);
 	dim3 output_size;
 	
 	dim3 input_size = {416, 416, 3};
-	layers[0] = make_convolution_layer(RELU, input_size, 3, 16, 1, 1, 1, 1, &output_size);
+	layers[0] = make_convolutional_layer(RELU, input_size, 3, 16, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[1] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[2] = make_convolution_layer(RELU, input_size, 3, 32, 1, 1, 1, 1, &output_size);
+	layers[2] = make_convolutional_layer(RELU, input_size, 3, 32, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[3] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[4] = make_convolution_layer(RELU, input_size, 3, 64, 1, 1, 1, 1, &output_size);
+	layers[4] = make_convolutional_layer(RELU, input_size, 3, 64, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[5] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[6] = make_convolution_layer(RELU, input_size, 3, 128, 1, 1, 1, 1, &output_size);
+	layers[6] = make_convolutional_layer(RELU, input_size, 3, 128, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[7] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[8] = make_convolution_layer(RELU, input_size, 3, 256, 1, 1, 1, 1, &output_size);
+	layers[8] = make_convolutional_layer(RELU, input_size, 3, 256, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[9] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[10] = make_convolution_layer(RELU, input_size, 3, 512, 1, 1, 1, 1, &output_size);
+	layers[10] = make_convolutional_layer(RELU, input_size, 3, 512, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[11] = make_maxpool_layer(input_size, 2, 1, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[12] = make_convolution_layer(RELU, input_size, 3, 1024, 1, 1, 1, 1, &output_size);
+	layers[12] = make_convolutional_layer(RELU, input_size, 3, 1024, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
-	layers[13] = make_convolution_layer(RELU, input_size, 1, 256, 1, 0, 1, 1, &output_size);
+	layers[13] = make_convolutional_layer(RELU, input_size, 1, 256, 1, 0, 1, 1, &output_size);
 	input_size = output_size;
-	layers[14] = make_convolution_layer(RELU, input_size, 3, 512, 1, 1, 1, 1, &output_size);
+	layers[14] = make_convolutional_layer(RELU, input_size, 3, 512, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
-	layers[15] = make_convolution_layer(RELU, input_size, 1, 255, 1, 0, 1, 1, &output_size);
+	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 1, &output_size);
+	
+	input_size = output_size;
+	int bigger_mask[] = {3, 4, 5};
+	layers[16] = make_yolo_layer(input_size, 1, 3, 6, 80, bigger_mask);
+	
+	int input_layers[] = {13};
+	convolutional_layer *layer = (convolutional_layer *)layers[13];
+	int input_sizes[] = {layer->noutputs};
+	layers[17] = make_route_layer(1, input_layers, input_sizes, 1);
+	
+	input_size = layer->output_size;
+	layers[18] = make_convolutional_layer(RELU, input_size, 1, 128, 1, 0, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[19] = make_resample_layer(input_size, 1, 2, &output_size);
+	
+	int route_layers[] = {8, 19};
+	int route_sizes[2];
+	for (int i = 0; i < 2; ++i) {
+		layer = (convolutional_layer *)layers[route_layers[i]];
+		route_sizes[i] = layer->noutputs;
+	}
+	layers[20] = make_route_layer(1, route_layers, route_sizes, 2);
+	
+	layer = (convolutional_layer *)layers[route_layers[0]];
+	input_size.w = layer->output_size.w;
+	input_size.h = layer->output_size.w;
+	input_size.c = layer->output_size.c;
+	resample_layer *rsl = (resample_layer *)layers[route_layers[1]];
+	input_size.c += rsl->output_size.c;
+	layers[21] = make_convolutional_layer(RELU, input_size, 3, 256, 1, 1, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 1, &output_size);
+	
+	input_size = output_size;
+	int smaller_mask[] = {0, 1, 2};
+	layers[23] = make_yolo_layer(input_size, 1, 3, 6, 80, smaller_mask);
 	
 	convnet *net = convnet_create(layers, nlayers);
 	convnet_architecture(net);
@@ -241,5 +285,153 @@ void test_activate(int argc, char *argv[])
 	printf("\n");
 	for (int i = 0; i < 16; i++) {
 		printf("%.5f ", output[i]);
+	}
+}
+
+void test_convolutional_layer(int argc, char *argv[])
+{
+	dim3 input_size = {26, 26, 3};
+	float *input = (float *)malloc(input_size.w * input_size.h * input_size.c * sizeof(float));
+	if (!input) {
+		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	dim3 output_size;
+	void *layers[] = {
+		make_convolutional_layer(LINEAR, input_size, 3, 512, 1, 1, 1, 0, &output_size)};
+	
+	convnet *net = convnet_create(layers, 1);
+	convnet_architecture(net);
+	
+	convolutional_layer *layer = (convolutional_layer *)layers[0];
+	
+	srand(time(NULL));
+	for (int i = 0; i < layer->ninputs; ++i) {
+		input[i] = (rand() / (double)RAND_MAX - 0.5) * 2;
+	}
+	
+	int size = layer->filter_size * layer->filter_size * layer->input_size.c;
+	for (int i = 0; i < layer->nfilters; ++i) {
+		for (int j = 0; j < size; ++j) {
+			layer->weights[i * size + j] = 1;
+		}
+	}
+	
+	layer->input = input;
+	forward_convolutional_layer(layer, net);
+	
+	FILE *fp = fopen("convolution.txt", "w");
+	
+	for (int c = 0; c < input_size.c; c++) {
+		for (int y = 0; y < input_size.h; y++) {
+			for (int x = 0; x < input_size.w; x++) {
+				int id = c * input_size.w * input_size.h + y * input_size.w + x;
+				if (layer->input[id] > 0) fputs(" ", fp);
+				fprintf(fp, "%.5f ", layer->input[id]);
+			}
+			fputs("\n", fp);
+		}
+		fputs("-----------------------------------------\n", fp);
+	}
+	
+	fputs("-----------------------------------------\n", fp);
+	fputs("-----------------------------------------\n", fp);
+	for (int c = 0; c < output_size.c; c++) {
+		for (int y = 0; y < output_size.h; y++) {
+			for (int x = 0; x < output_size.w; x++) {
+				int id = c * output_size.w * output_size.h + y * output_size.w + x;
+				if (layer->output[id] > 0) fputs(" ", fp);
+				fprintf(fp, "%.5f ", layer->output[id]);
+			}
+			fputs("\n", fp);
+		}
+		fputs("-----------------------------------------\n", fp);
+	}
+	
+	fclose(fp);
+	convnet_destroy(net);
+	free(input);
+}
+
+void test_maxpool_layer(int argc, char *argv[])
+{
+	dim3 input_size = {27, 27, 3};
+	float *input = (float *)malloc(input_size.w * input_size.h * input_size.c * sizeof(float));
+	if (!input) {
+		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	dim3 output_size;
+	void *layers[] = {make_maxpool_layer(input_size, 3, 3, 0, 1, &output_size)};
+	
+	convnet *net = convnet_create(layers, 1);
+	convnet_architecture(net);
+	
+	maxpool_layer *layer = (maxpool_layer *)layers[0];
+	
+	srand(time(NULL));
+	for (int i = 0; i < layer->ninputs; ++i) {
+		input[i] = (rand() / (double)RAND_MAX - 0.5) * 2;
+	}
+	
+	layer->input = input;
+	forward_maxpool_layer(layer, net);
+	
+	FILE *fp = fopen("maxpool.txt", "w");
+	
+	for (int c = 0; c < input_size.c; c++) {
+		for (int y = 0; y < input_size.h; y++) {
+			for (int x = 0; x < input_size.w; x++) {
+				int id = c * input_size.w * input_size.h + y * input_size.w + x;
+				if (layer->input[id] > 0) fputs(" ", fp);
+				fprintf(fp, "%.5f ", layer->input[id]);
+			}
+			fputs("\n", fp);
+		}
+		fputs("-----------------------------------------\n", fp);
+	}
+	
+	fputs("-----------------------------------------\n", fp);
+	fputs("-----------------------------------------\n", fp);
+	for (int c = 0; c < output_size.c; c++) {
+		for (int y = 0; y < output_size.h; y++) {
+			for (int x = 0; x < output_size.w; x++) {
+				int id = c * output_size.w * output_size.h + y * output_size.w + x;
+				if (layer->output[id] > 0) fputs(" ", fp);
+				fprintf(fp, "%.5f ", layer->output[id]);
+			}
+			fputs("\n", fp);
+		}
+		fputs("-----------------------------------------\n", fp);
+	}
+	
+	fclose(fp);
+	convnet_destroy(net);
+	free(input);
+}
+
+void test_mset(int argc, char *argv[])
+{
+	float X[128];
+	float val = 3.14159;
+	
+	mset((char *const)X, sizeof(X), (const char *const)&val, sizeof(float));
+	
+	for (int i = 0; i < 128; ++i) {
+		printf("%.5f ", X[i]);
+	}
+}
+
+void test_mcopy(int argc, char *argv[])
+{
+	float X[] = {1.111 ,2.222, 3.333, 4.444, 5.555};
+	float Y[5];
+	
+	mcopy((const char *const)X, (char *const)Y, sizeof(X));
+	
+	for (int i = 0; i < 5; ++i) {
+		printf("%f ", Y[i]);
 	}
 }

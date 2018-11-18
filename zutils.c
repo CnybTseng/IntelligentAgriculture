@@ -19,20 +19,18 @@ void mmfree(int n, ...)
 	va_end(ap);
 }
 
-void mset(void *X, int size, const char *type, void *value)
+void mset(char *const X, size_t size, const char *const val, int nvals)
 {
-	if (!X || size <= 0) {
-		fprintf(stderr, "X is null[%s:%d].\n", __FILE__, __LINE__);
-		return;
-	}
-	
-	if (!strcmp(type, "float")) {
-		float *at = (float *)X;
-		float alpha = *((float *)value);
-		for (int i = 0; i < size; ++i) {
-			at[i] = alpha;
+	for (int i = 0; i < nvals; ++i) {
+		for (size_t j = 0; j < size; j += nvals) {
+			X[j + i] = val[i];
 		}
-	} else {
-		fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+	}
+}
+
+void mcopy(const char *const X, char *const Y, size_t size)
+{
+	for (size_t i = 0; i < size; ++i) {
+		Y[i] = X[i];
 	}
 }

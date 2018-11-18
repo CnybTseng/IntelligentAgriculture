@@ -7,7 +7,8 @@ extern "C"
 #endif
 
 void mmfree(int n, ...);
-void mset(void *X, int size, const char *type, void *value);
+void mset(char *const X, size_t size, const char *const val, int nvals);
+void mcopy(const char *const X, char *const Y, size_t size);
 
 #ifdef __cplusplus
 }
