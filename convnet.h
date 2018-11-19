@@ -143,7 +143,7 @@ typedef struct {
 typedef struct {
 	box bbox;
 	int classes;
-	float *probability;
+	float *probabilities;
 	float objectness;
 } detection;
 

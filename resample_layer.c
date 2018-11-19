@@ -52,7 +52,7 @@ void free_resample_layer(resample_layer *layer)
 	layer = NULL;
 }
 
-void forward_upsample_layer(resample_layer *layer, convnet *net)
+void forward_resample_layer(resample_layer *layer, convnet *net)
 {
 	float alpha = 0;
 	size_t size = layer->noutputs * layer->batch_size * sizeof(float);
@@ -70,7 +70,7 @@ void forward_upsample_layer(resample_layer *layer, convnet *net)
 	}
 }
 
-void backward_upsample_layer(resample_layer *layer, convnet *net)
+void backward_resample_layer(resample_layer *layer, convnet *net)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }

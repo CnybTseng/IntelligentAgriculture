@@ -44,7 +44,7 @@ ifeq ($(ARM),1)
 INC+= -I../thirdparty/opencl-1.1/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g
 ifeq ($(ARM),1)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99
 endif

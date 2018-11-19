@@ -10,6 +10,7 @@ extern "C"
 
 void forward_convolutional_layer(convolutional_layer *layer, convnet *net);
 void backward_convolutional_layer(convolutional_layer *layer, convnet *net);
+void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp);
 int convolutional_output_width(convolutional_layer *layer);
 int convolutional_output_height(convolutional_layer *layer);
 void add_bias(float *output, float *biases, int batch_size, int nchannels, int size);

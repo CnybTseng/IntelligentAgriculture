@@ -8,6 +8,8 @@
 #include "activation.h"
 #include "convolutional_layer.h"
 #include "maxpool_layer.h"
+#include "bmp.h"
+#include "image.h"
 
 void test_multi_free(int argc, char *argv[]);
 void test_convnet(int argc, char *argv[]);
@@ -18,10 +20,12 @@ void test_convolutional_layer(int argc, char *argv[]);
 void test_maxpool_layer(int argc, char *argv[]);
 void test_mset(int argc, char *argv[]);
 void test_mcopy(int argc, char *argv[]);
+void test_bmp(int argc, char *argv[]);
+void test_split(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_convnet(argc, argv);
+	test_split(argc, argv);
 	
 	return 0;
 }
@@ -89,7 +93,7 @@ void test_convnet(int argc, char *argv[])
 	input_size = output_size;
 	layers[14] = make_convolutional_layer(RELU, input_size, 3, 512, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
-	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 1, &output_size);
+	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 0, &output_size);
 	
 	input_size = output_size;
 	int bigger_mask[] = {3, 4, 5};
@@ -106,24 +110,24 @@ void test_convnet(int argc, char *argv[])
 	input_size = output_size;
 	layers[19] = make_resample_layer(input_size, 1, 2, &output_size);
 	
-	int route_layers[] = {8, 19};
+	int route_layers[] = {19, 8};
 	int route_sizes[2];
-	for (int i = 0; i < 2; ++i) {
-		layer = (convolutional_layer *)layers[route_layers[i]];
-		route_sizes[i] = layer->noutputs;
-	}
+	resample_layer *rsl = (resample_layer *)layers[route_layers[0]];
+	route_sizes[0] = rsl->noutputs;
+	layer = (convolutional_layer *)layers[route_layers[1]];
+	route_sizes[1] = layer->noutputs;
 	layers[20] = make_route_layer(1, route_layers, route_sizes, 2);
 	
-	layer = (convolutional_layer *)layers[route_layers[0]];
+	layer = (convolutional_layer *)layers[route_layers[1]];
 	input_size.w = layer->output_size.w;
 	input_size.h = layer->output_size.w;
 	input_size.c = layer->output_size.c;
-	resample_layer *rsl = (resample_layer *)layers[route_layers[1]];
+	rsl = (resample_layer *)layers[route_layers[0]];
 	input_size.c += rsl->output_size.c;
 	layers[21] = make_convolutional_layer(RELU, input_size, 3, 256, 1, 1, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 1, &output_size);
+	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 0, &output_size);
 	
 	input_size = output_size;
 	int smaller_mask[] = {0, 1, 2};
@@ -132,6 +136,20 @@ void test_convnet(int argc, char *argv[])
 	convnet *net = convnet_create(layers, nlayers);
 	convnet_architecture(net);
 	
+	image input = {416, 416, 3, NULL};
+	input.data = calloc(input.w * input.h * input.c, sizeof(float));
+	if (!input.data) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+	}
+	
+	srand(time(NULL));
+	for (int i = 0; i < input.w * input.h * input.c; ++i) {
+		input.data[i] = rand() / (double)RAND_MAX;
+	}
+	
+	convnet_inference(net, &input);
+	
+	free(input.data);
 	convnet_destroy(net);
 }
 
@@ -434,4 +452,54 @@ void test_mcopy(int argc, char *argv[])
 	for (int i = 0; i < 5; ++i) {
 		printf("%f ", Y[i]);
 	}
+}
+
+void test_bmp(int argc, char *argv[])
+{
+	BMP *bmp = bmp_read("dog.bmp");
+	if (!bmp) {
+		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
+	bmp_write(bmp, "girl.bmp");
+	bmp_delete(bmp);
+}
+
+void test_split(int argc, char *argv[])
+{
+	BMP *bmp = bmp_read("dog.bmp");
+	if (!bmp) {
+		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
+	float *splited = calloc(bmp->width * bmp->height * bmp->bit_count, sizeof(float));
+	if (!splited) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	int nchannels = (bmp->bit_count) >> 3;
+	split(bmp->data, splited, bmp->width, bmp->height, nchannels);
+	
+	FILE *fp = fopen("split.txt", "w");
+	for (int i = 0; i < bmp->width * nchannels; ++i) {
+		fprintf(fp, "%u ", bmp->data[i]);
+	}
+	
+	fputs("\n\n", fp);
+	for (int c = 0; c < nchannels; ++c) {
+		for (int i = 0; i < bmp->width; ++i) {
+			fprintf(fp, "%.0f ", splited[i + c * bmp->width * bmp->height]);
+		}
+		fputs("\n", fp);
+	}
+	
+	fclose(fp);
+	free(splited);
+	bmp_delete(bmp);
 }

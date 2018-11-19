@@ -36,7 +36,7 @@ void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int 
 		layer->input_layers[i] = input_layers[i];
 		layer->input_sizes[i] = input_sizes[i];
 	}
-	
+
 	layer->noutputs = layer->ninputs;
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
 	if (!layer->output) {
@@ -73,15 +73,27 @@ void free_route_layer(route_layer *layer)
 void forward_route_layer(route_layer *layer, convnet *net)
 {
 	int offset = 0;
-	convolutional_layer *input_layer;
 	for (int r = 0; r < layer->nroutes; ++r) {
-		input_layer = (convolutional_layer *)net->layers[layer->input_layers[r]];
-		for (int b = 0; b < layer->batch_size; ++b) {
-			float *X = input_layer->output + b * layer->input_sizes[r];
-			float *Y = layer->output + b * layer->noutputs + offset;
-			mcopy((const char *const)X, (char *const)Y, layer->input_sizes[r] * sizeof(float));
+		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[layer->input_layers[r]]);		
+		if (type == CONVOLUTIONAL) {
+			convolutional_layer *input_layer = (convolutional_layer *)net->layers[layer->input_layers[r]];
+			for (int b = 0; b < layer->batch_size; ++b) {
+				float *X = input_layer->output + b * layer->input_sizes[r];
+				float *Y = layer->output + b * layer->noutputs + offset;
+				mcopy((const char *const)X, (char *const)Y, layer->input_sizes[r] * sizeof(float));
+			}
+			offset += layer->input_sizes[r];
+		} else if (type == RESAMPLE) {
+			resample_layer *input_layer = (resample_layer *)net->layers[layer->input_layers[r]];
+			for (int b = 0; b < layer->batch_size; ++b) {
+				float *X = input_layer->output + b * layer->input_sizes[r];
+				float *Y = layer->output + b * layer->noutputs + offset;
+				mcopy((const char *const)X, (char *const)Y, layer->input_sizes[r] * sizeof(float));
+			}
+			offset += layer->input_sizes[r];
+		} else {
+			fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 		}
-		offset += layer->input_sizes[r];
 	}
 }
 
