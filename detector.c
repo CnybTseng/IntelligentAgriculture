@@ -499,7 +499,24 @@ void test_split(int argc, char *argv[])
 		fputs("\n", fp);
 	}
 	
+	char *red = calloc(bmp->width * bmp->height, sizeof(char));
+	if (!red) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		fclose(fp);
+		free(splited);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	for (int i = 0; i < bmp->width * bmp->height; ++i) {
+		red[i] = (char)splited[i];
+	}
+	
+	BMP *red_bmp = bmp_create(red, bmp->width, bmp->height, 8);
+	bmp_write(red_bmp, "red.bmp");
+	
 	fclose(fp);
 	free(splited);
 	bmp_delete(bmp);
+	bmp_delete(red_bmp);
 }
