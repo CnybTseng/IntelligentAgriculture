@@ -11,6 +11,7 @@
 #include "bmp.h"
 #include "image.h"
 
+image *load_test_image();
 void test_multi_free(int argc, char *argv[]);
 void test_convnet(int argc, char *argv[]);
 void test_im2col(int argc, char *argv[]);
@@ -22,12 +23,68 @@ void test_mset(int argc, char *argv[]);
 void test_mcopy(int argc, char *argv[]);
 void test_bmp(int argc, char *argv[]);
 void test_split(int argc, char *argv[]);
+void test_resize(int argc, char *argv[]);
+void test_embed(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_split(argc, argv);
+	test_convnet(argc, argv);
 	
 	return 0;
+}
+
+image *load_test_image()
+{
+	BMP *bmp = bmp_read("dog.bmp");
+	if (!bmp) {
+		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
+		return NULL;
+	}
+	
+	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
+	int nchannels = (bmp->bit_count) >> 3;
+	
+	image *splited = create_image(bmp->width, bmp->height, nchannels);
+	if (!splited) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		bmp_delete(bmp);
+		return NULL;
+	}
+	
+	float sx = 416.0f / bmp->width;
+	float sy = 416.0f / bmp->height;
+	float s = sx < sy ? sx : sy;
+	int rsz_width = (int)(bmp->width * s);
+	int rsz_height = (int)(bmp->height * s);
+	
+	image *rsz_splited = create_image(rsz_width, rsz_height, nchannels);
+	if (!rsz_splited) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		bmp_delete(bmp);
+		free_image(splited);
+		return NULL;
+	}
+	
+	split_channel(bmp->data, splited);
+	resize_image(splited, rsz_splited);
+	
+	image *standard = create_image(416, 416, nchannels);
+	if (!standard) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		bmp_delete(bmp);
+		free_image(splited);
+		free_image(rsz_splited);
+		return NULL;
+	}
+	
+	set_image(standard, 0.5);
+	embed_image(rsz_splited, standard);
+	
+	bmp_delete(bmp);
+	free_image(splited);
+	free_image(rsz_splited);
+		
+	return standard;
 }
 
 void test_multi_free(int argc, char *argv[])
@@ -135,21 +192,26 @@ void test_convnet(int argc, char *argv[])
 	
 	convnet *net = convnet_create(layers, nlayers);
 	convnet_architecture(net);
-	
-	image input = {416, 416, 3, NULL};
-	input.data = calloc(input.w * input.h * input.c, sizeof(float));
-	if (!input.data) {
-		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+#if 0	
+	image *standard = load_test_image();
+	if (!standard) {
+		convnet_destroy(net);
+		return;
 	}
 	
-	srand(time(NULL));
-	for (int i = 0; i < input.w * input.h * input.c; ++i) {
-		input.data[i] = rand() / (double)RAND_MAX;
-	}
+	FILE *fp = fopen("standard.bin", "wb");
+	fwrite(standard->data, sizeof(float), standard->w * standard->h * standard->c, fp);
+	fclose(fp);
+#endif
+	image *standard = create_image(416, 416, 3);
+	FILE *fp = fopen("standard2.bin", "rb");
+	fread(standard->data, sizeof(float), standard->w * standard->h * standard->c, fp);
+	fclose(fp);
 	
-	convnet_inference(net, &input);
+	convnet_inference(net, standard);
+	get_detections(net, 0.5, 416, 416, NULL);
 	
-	free(input.data);
+	free_image(standard);
 	convnet_destroy(net);
 }
 
@@ -476,17 +538,17 @@ void test_split(int argc, char *argv[])
 	}
 	
 	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
-	float *splited = calloc(bmp->width * bmp->height * bmp->bit_count, sizeof(float));
+	int nchannels = (bmp->bit_count) >> 3;
+	image *splited = create_image(bmp->width, bmp->height, nchannels);
 	if (!splited) {
-		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
 		bmp_delete(bmp);
 		return;
 	}
 	
-	int nchannels = (bmp->bit_count) >> 3;
-	split(bmp->data, splited, bmp->width, bmp->height, nchannels);
+	split_channel(bmp->data, splited);
 	
-	FILE *fp = fopen("split.txt", "w");
+	FILE *fp = fopen("split_channel.txt", "w");
 	for (int i = 0; i < bmp->width * nchannels; ++i) {
 		fprintf(fp, "%u ", bmp->data[i]);
 	}
@@ -494,7 +556,7 @@ void test_split(int argc, char *argv[])
 	fputs("\n\n", fp);
 	for (int c = 0; c < nchannels; ++c) {
 		for (int i = 0; i < bmp->width; ++i) {
-			fprintf(fp, "%.0f ", splited[i + c * bmp->width * bmp->height]);
+			fprintf(fp, "%.0f ", splited->data[i + c * bmp->width * bmp->height]);
 		}
 		fputs("\n", fp);
 	}
@@ -503,20 +565,150 @@ void test_split(int argc, char *argv[])
 	if (!red) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		fclose(fp);
-		free(splited);
+		free_image(splited);
 		bmp_delete(bmp);
 		return;
 	}
 	
 	for (int i = 0; i < bmp->width * bmp->height; ++i) {
-		red[i] = (char)splited[i];
+		red[i] = (char)splited->data[i];
 	}
 	
 	BMP *red_bmp = bmp_create(red, bmp->width, bmp->height, 8);
 	bmp_write(red_bmp, "red.bmp");
 	
 	fclose(fp);
-	free(splited);
+	free_image(splited);
+	free(red);
+	bmp_delete(bmp);
+	bmp_delete(red_bmp);
+}
+
+void test_resize(int argc, char *argv[])
+{
+	BMP *bmp = bmp_read("dog.bmp");
+	if (!bmp) {
+		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
+	int nchannels = (bmp->bit_count) >> 3;
+	
+	image *splited = create_image(bmp->width, bmp->height, nchannels);
+	if (!splited) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	float sx = 416.0f / bmp->width;
+	float sy = 416.0f / bmp->height;
+	float s = sx < sy ? sx : sy;
+	int rsz_width = (int)(bmp->width * s);
+	int rsz_height = (int)(bmp->height * s);
+	
+	image *rsz_splited = create_image(rsz_width, rsz_height, nchannels);
+	if (!rsz_splited) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		free_image(splited);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	split_channel(bmp->data, splited);
+	resize_image(splited, rsz_splited);
+	
+	char *red = calloc(rsz_width * rsz_height, sizeof(char));
+	if (!red) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		free_image(splited);
+		free_image(rsz_splited);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	for (int i = 0; i < rsz_width * rsz_height; ++i) {
+		red[i] = (char)rsz_splited->data[i];
+	}
+	
+	BMP *red_bmp = bmp_create(red, rsz_width, rsz_height, 8);
+	bmp_write(red_bmp, "red.bmp");
+	
+	free(red);
+	free_image(splited);
+	free_image(rsz_splited);
+	bmp_delete(bmp);
+	bmp_delete(red_bmp);
+}
+
+void test_embed(int argc, char *argv[])
+{
+	BMP *bmp = bmp_read("dog.bmp");
+	if (!bmp) {
+		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
+	int nchannels = (bmp->bit_count) >> 3;
+	
+	image *splited = create_image(bmp->width, bmp->height, nchannels);
+	if (!splited) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	float sx = 416.0f / bmp->width;
+	float sy = 416.0f / bmp->height;
+	float s = sx < sy ? sx : sy;
+	int rsz_width = (int)(bmp->width * s);
+	int rsz_height = (int)(bmp->height * s);
+	
+	image *rsz_splited = create_image(rsz_width, rsz_height, nchannels);
+	if (!rsz_splited) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		free_image(splited);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	split_channel(bmp->data, splited);
+	resize_image(splited, rsz_splited);
+	
+	image *standard = create_image(416, 416, nchannels);
+	if (!standard) {
+		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		free_image(splited);
+		free_image(rsz_splited);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	embed_image(rsz_splited, standard);
+	
+	char *red = calloc(standard->w * standard->h, sizeof(char));
+	if (!red) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		free_image(splited);
+		free_image(rsz_splited);
+		free_image(standard);
+		bmp_delete(bmp);
+		return;
+	}
+	
+	for (int i = 0; i < standard->w * standard->h; ++i) {
+		red[i] = (char)standard->data[i];
+	}
+	
+	BMP *red_bmp = bmp_create(red, standard->w, standard->h, 8);
+	bmp_write(red_bmp, "red.bmp");
+	
+	free(red);
+	free_image(splited);
+	free_image(rsz_splited);
+	free_image(standard);
 	bmp_delete(bmp);
 	bmp_delete(red_bmp);
 }

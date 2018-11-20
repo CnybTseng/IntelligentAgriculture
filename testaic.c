@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
 
 void test_aicore(int argc, char *argv[])
 {
-	int ret = ai_core_init();
+	int ret = ai_core_init(NULL);
 	if (AIC_OK != ret) {
 		fprintf(stderr, "ai_core_init[%s:%d:%d].\n", __FILE__, __LINE__, ret);
 		return;

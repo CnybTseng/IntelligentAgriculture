@@ -89,8 +89,9 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	return (void *)layer;
 }
 
-void free_convolution_layer(convolutional_layer *layer)
+void free_convolution_layer(void *_layer)
 {
+	convolutional_layer *layer = (convolutional_layer *)_layer;
 	if (!layer) return;
 	
 	if (layer->weights) {
@@ -132,8 +133,38 @@ void free_convolution_layer(convolutional_layer *layer)
 	layer = NULL;
 }
 
-void forward_convolutional_layer(convolutional_layer *layer, convnet *net)
+void print_convolutional_layer_info(void *_layer, int id)
 {
+	convolutional_layer *layer = (convolutional_layer*)_layer;
+	printf("%2d\tconv\t\t%4d x%4d x%4d\t\t%dx%d/%d\t\t%4d\t\t%4d x%4d x%4d\n",
+		id,
+		layer->input_size.w,
+		layer->input_size.h,
+		layer->input_size.c,
+		layer->filter_size,
+		layer->filter_size,
+		layer->stride,
+		layer->nfilters,
+		layer->output_size.w,
+		layer->output_size.h,
+		layer->output_size.c);
+}
+
+void set_convolutional_layer_input(void *_layer, float *input)
+{
+	convolutional_layer *layer = (convolutional_layer *)_layer;
+	layer->input = input;
+}
+
+float *get_convolutional_layer_output(void *_layer)
+{
+	convolutional_layer *layer = (convolutional_layer *)_layer;
+	return layer->output;
+}
+
+void forward_convolutional_layer(void *_layer, convnet *net)
+{
+	convolutional_layer *layer = (convolutional_layer *)_layer;
 	float alpha = 0;
 	size_t size = layer->noutputs * layer->batch_size * sizeof(float);
 	mset((char *const)layer->output, size, (const char *const)&alpha, sizeof(float));
@@ -163,6 +194,11 @@ void forward_convolutional_layer(convolutional_layer *layer, convnet *net)
 	}
 	
 	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
+	
+	static int timer = 0;
+	char filename[128];
+	sprintf(filename, "conv_%d.txt", timer++);
+	save_volume(layer->output, layer->output_size.w, layer->output_size.h, layer->output_size.c, filename);
 }
 
 void backward_convolutional_layer(convolutional_layer *layer, convnet *net)

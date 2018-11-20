@@ -39,8 +39,9 @@ void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *out
 	return layer;
 }
 
-void free_resample_layer(resample_layer *layer)
+void free_resample_layer(void *_layer)
 {
+	resample_layer *layer = (resample_layer *)_layer;
 	if (!layer) return;
 	
 	if (layer->output) {
@@ -52,8 +53,35 @@ void free_resample_layer(resample_layer *layer)
 	layer = NULL;
 }
 
-void forward_resample_layer(resample_layer *layer, convnet *net)
+void print_resample_layer_info(void *_layer, int id)
 {
+	resample_layer *layer = (resample_layer *)_layer;
+	printf("%2d\tresample\t%4d x%4d x%4d\t\t%d\t\t\t\t%4d x%4d x%4d\n",
+		id,
+		layer->input_size.w,
+		layer->input_size.h,
+		layer->input_size.c,
+		layer->stride,
+		layer->output_size.w,
+		layer->output_size.h,
+		layer->output_size.c);
+}
+
+void set_resample_layer_input(void *_layer, float *input)
+{
+	resample_layer *layer = (resample_layer *)_layer;
+	layer->input = input;
+}
+
+float *get_resample_layer_output(void *_layer)
+{
+	resample_layer *layer = (resample_layer *)_layer;
+	return layer->output;
+}
+
+void forward_resample_layer(void *_layer, convnet *net)
+{
+	resample_layer *layer = (resample_layer *)_layer;
 	float alpha = 0;
 	size_t size = layer->noutputs * layer->batch_size * sizeof(float);
 	mset((char *const)layer->output, size, (const char *const)&alpha, sizeof(float));

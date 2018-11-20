@@ -32,12 +32,25 @@ typedef struct {
 struct convnet;
 typedef struct convnet convnet;
 
+typedef void (*PRINT_LAYER_INFO)(void *layer, int id);
+typedef void (*SET_LAYER_INPUT)(void *layer, float *input);
+typedef float *(*GET_LAYER_OUTPUT)(void *layer);
+typedef void (*FORWARD)(void *layer, convnet *net);
+typedef void (*FREE_LAYER)(void *layer);
+
 struct convnet {
 	WORK_MODE work_mode;
 	int nlayers;
 	void **layers;
 	float *input;
 	float *output;
+	float thresh;
+	PRINT_LAYER_INFO *print_layer_info;
+	SET_LAYER_INPUT *set_layer_input;
+	GET_LAYER_OUTPUT *get_layer_output;
+	FORWARD *forward;
+	FREE_LAYER *free_layer;
+	int *is_output_layer;
 };
 
 typedef struct {
@@ -125,6 +138,7 @@ typedef struct {
 	int total_scales;
 	int classes;
 	int *mask;
+	int *biases;
 	float *input;
 	float *output;
 } yolo_layer;
@@ -147,29 +161,30 @@ typedef struct {
 	float objectness;
 } detection;
 
-/** @name 神经网络层的创建和销毁.
+/** @name 卷积网络层的创建和销毁.
  ** @ { */
 void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
                                int stride, int padding, int batch_size, int batch_norm, dim3 *output_size);
-void free_convolution_layer(convolutional_layer *layer);
+void free_convolution_layer(void *_layer);
 void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int padding, int batch_size,
                          dim3 *output_size);
-void free_maxpool_layer(maxpool_layer *layer);
+void free_maxpool_layer(void *_layer);
 void *make_yolo_layer(dim3 input_size, int batch_size, int nscales, int total_scales, int classes, int *mask);
-void free_yolo_layer(yolo_layer *layer);
+void free_yolo_layer(void *_layer);
 void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int nroutes);
-void free_route_layer(route_layer *layer);
+void free_route_layer(void *_layer);
 void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *output_size);
-void free_resample_layer(resample_layer *layer);
+void free_resample_layer(void *_layer);
 /** @ }*/
 
-/** @name 卷积神经网络的创建, 训练, 推断, 销毁等操作.
+/** @name 卷积网络的创建, 训练, 推断, 销毁等操作.
  ** @ { */
 convnet *convnet_create(void *layers[], int nlayers);
 void convnet_train(convnet *net, datastore *ds, train_options *opts);
 float *convnet_inference(convnet *net, image *input);
 void convnet_destroy(convnet *net);
 void convnet_architecture(convnet *net);
+detection *get_detections(convnet *net, float thresh, int width, int height, int *ndets);
 /** @ } */
 
 #ifdef __cplusplus

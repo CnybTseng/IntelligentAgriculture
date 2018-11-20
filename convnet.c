@@ -7,6 +7,10 @@
 #include "resample_layer.h"
 #include "yolo_layer.h"
 
+static int convnet_parse_layer(convnet *net);
+static int convnet_parse_weights(convnet *net);
+static int convnet_get_detect_num(convnet *net);
+
 convnet *convnet_create(void *layers[], int nlayers)
 {
 	convnet *net = calloc(1, sizeof(convnet));
@@ -20,33 +24,55 @@ convnet *convnet_create(void *layers[], int nlayers)
 	net->layers = layers;
 	net->input = NULL;
 	net->output = NULL;
+	net->thresh = 0.5f;
+	net->print_layer_info = NULL;
+	net->set_layer_input = NULL;
+	net->get_layer_output = NULL;
+	net->forward = NULL;
+	net->free_layer = NULL;
+	net->is_output_layer = NULL;
 	
-	FILE *fp = fopen("yolov3-tiny.weights", "rb");
-	if (!fp) {
-		fprintf(stderr, "fopen[%s:%d].\n", __FILE__, __LINE__);
-		convnet_destroy(net);
-		return net;
+	net->print_layer_info = calloc(nlayers, sizeof(PRINT_LAYER_INFO));
+	if (!net->print_layer_info) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
 	}
 	
-	int major;
-	int minor;
-	int revision;
-	unsigned long long seen;
-	fread(&major, sizeof(int), 1, fp);
-	fread(&minor, sizeof(int), 1, fp);
-	fread(&revision, sizeof(int), 1, fp);
-	fread(&seen, sizeof(unsigned long long), 1, fp);
-	printf("version %d.%d.%d, seen %u.\n", major, minor, revision, (unsigned int)seen);
-	
-	for (int i = 0; i < nlayers; ++i) {
-		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
-		if (type == CONVOLUTIONAL) {
-			convolutional_layer *layer = (convolutional_layer*)net->layers[i];
-			load_convolutional_layer_weights(layer, fp);
-		}
+	net->set_layer_input = calloc(nlayers, sizeof(SET_LAYER_INPUT));
+	if (!net->set_layer_input) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
 	}
 	
-	fclose(fp);
+	net->get_layer_output = calloc(nlayers, sizeof(GET_LAYER_OUTPUT));
+	if (!net->get_layer_output) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	net->forward = calloc(nlayers, sizeof(FORWARD));
+	if (!net->forward) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	net->free_layer = calloc(nlayers, sizeof(FREE_LAYER));
+	if (!net->free_layer) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	net->is_output_layer = calloc(nlayers, sizeof(int));
+	if (!net->is_output_layer) {
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	if (convnet_parse_layer(net)) goto cleanup;
+	
+	if (convnet_parse_weights(net)) {
+		cleanup:convnet_destroy(net);
+	}
 	
 	return net;
 }
@@ -63,37 +89,9 @@ float *convnet_inference(convnet *net, image *input)
 	net->input = input->data;
 	
 	for (int i = 0; i < net->nlayers; ++i) {
-		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
-		if (type == CONVOLUTIONAL) {
-			printf("%d conv\n", i + 1);
-			convolutional_layer *layer = (convolutional_layer*)net->layers[i];
-			layer->input = net->input;
-			forward_convolutional_layer(layer, net);
-			net->input = layer->output;
-		} else if (type == MAXPOOL) {
-			printf("%d maxpool\n", i + 1);
-			maxpool_layer *layer = (maxpool_layer *)net->layers[i];
-			layer->input = net->input;
-			forward_maxpool_layer(layer, net);
-			net->input = layer->output;
-		} else if (type == ROUTE) {
-			printf("%d route\n", i + 1);
-			route_layer *layer = (route_layer *)net->layers[i];
-			forward_route_layer(layer, net);
-			net->input = layer->output;
-		} else if (type == RESAMPLE) {
-			printf("%d resample\n", i + 1);
-			resample_layer *layer = (resample_layer *)net->layers[i];
-			layer->input = net->input;
-			forward_resample_layer(layer, net);
-		} else if (type == YOLO) {
-			printf("%d yolo\n", i + 1);
-			yolo_layer *layer = (yolo_layer *)net->layers[i];
-			layer->input = net->input;
-			forward_yolo_layer(layer, net);
-		} else {
-			fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
-		}
+		net->set_layer_input[i](net->layers[i], net->input);
+		net->forward[i](net->layers[i], net);
+		net->input = net->get_layer_output[i](net->layers[i]);
 	}
 
 	return 0;
@@ -103,26 +101,38 @@ void convnet_destroy(convnet *net)
 {
 	if (!net) return;
 	
-	for (int i = 0; i < net->nlayers; ++i) {
-		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
-		if (type == CONVOLUTIONAL) {
-			convolutional_layer *layer = (convolutional_layer*)net->layers[i];
-			free_convolution_layer(layer);
-		} else if (type == MAXPOOL) {
-			maxpool_layer *layer = (maxpool_layer *)net->layers[i];
-			free_maxpool_layer(layer);
-		} else if (type == ROUTE) {
-			route_layer *layer = (route_layer *)net->layers[i];
-			free_route_layer(layer);
-		} else if (type == RESAMPLE) {
-			resample_layer *layer = (resample_layer *)net->layers[i];
-			free_resample_layer(layer);
-		} else if (type == YOLO) {
-			yolo_layer *layer = (yolo_layer *)net->layers[i];
-			free_yolo_layer(layer);
-		} else {
-			fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
-		}
+	for (int i = 0; i < net->nlayers; ++i) {		
+		net->free_layer[i](net->layers[i]);
+	}
+	
+	if (net->print_layer_info) {
+		free(net->print_layer_info);
+		net->print_layer_info = NULL;
+	}
+	
+	if (net->set_layer_input) {
+		free(net->set_layer_input);
+		net->set_layer_input = NULL;
+	}
+	
+	if (net->get_layer_output) {
+		free(net->get_layer_output);
+		net->get_layer_output = NULL;
+	}
+	
+	if (net->forward) {
+		free(net->forward);
+		net->forward = NULL;
+	}
+	
+	if (net->free_layer) {
+		free(net->free_layer);
+		net->free_layer = NULL;
+	}
+	
+	if (net->is_output_layer) {
+		free(net->is_output_layer);
+		net->is_output_layer = NULL;
 	}
 	
 	free(net);
@@ -132,60 +142,101 @@ void convnet_destroy(convnet *net)
 void convnet_architecture(convnet *net)
 {
 	printf("id\tlayer\t\t\t   input\t  size/stride\t     filters\t\t\t  output\n");
-	
 	for (int i = 0; i < net->nlayers; i++) {
+		net->print_layer_info[i](net->layers[i], i + 1);
+	}
+}
+
+detection *get_detections(convnet *net, float thresh, int width, int height, int *ndets)
+{
+	int num = convnet_get_detect_num(net);
+	printf("detections %d\n", num);
+	return NULL;
+}
+
+int convnet_parse_layer(convnet *net)
+{
+	for (int i = 0; i < net->nlayers; ++i) {
+		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
+		if (type == CONVOLUTIONAL) {
+			net->print_layer_info[i] = print_convolutional_layer_info;
+			net->set_layer_input[i] = set_convolutional_layer_input;
+			net->get_layer_output[i] = get_convolutional_layer_output;
+			net->forward[i] = forward_convolutional_layer;
+			net->free_layer[i] = free_convolution_layer;
+		} else if (type == MAXPOOL) {
+			net->print_layer_info[i] = print_maxpool_layer_info;
+			net->set_layer_input[i] = set_maxpool_layer_input;
+			net->get_layer_output[i] = get_maxpool_layer_output;
+			net->forward[i] = forward_maxpool_layer;
+			net->free_layer[i] = free_maxpool_layer;
+		} else if (type == ROUTE) {
+			net->print_layer_info[i] = print_route_layer_info;
+			net->set_layer_input[i] = set_route_layer_input;
+			net->get_layer_output[i] = get_route_layer_output;
+			net->forward[i] = forward_route_layer;
+			net->free_layer[i] = free_route_layer;
+		} else if (type == RESAMPLE) {
+			net->print_layer_info[i] = print_resample_layer_info;
+			net->set_layer_input[i] = set_resample_layer_input;
+			net->get_layer_output[i] = get_resample_layer_output;
+			net->forward[i] = forward_resample_layer;
+			net->free_layer[i] = free_resample_layer;
+		} else if (type == YOLO) {
+			net->print_layer_info[i] = print_yolo_layer_info;
+			net->set_layer_input[i] = set_yolo_layer_input;
+			net->get_layer_output[i] = get_yolo_layer_output;
+			net->forward[i] = forward_yolo_layer;
+			net->free_layer[i] = free_yolo_layer;
+			net->is_output_layer[i] = 1;
+		} else {
+			fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+			return -1;
+		}
+	}
+	
+	return 0;
+}
+
+int convnet_parse_weights(convnet *net)
+{
+	FILE *fp = fopen("yolov3-tiny.weights", "rb");
+	if (!fp) {
+		fprintf(stderr, "fopen[%s:%d].\n", __FILE__, __LINE__);
+		return -1;
+	}
+	
+	int major;
+	int minor;
+	int revision;
+	unsigned long long seen;
+	
+	fread(&major, sizeof(int), 1, fp);
+	fread(&minor, sizeof(int), 1, fp);
+	fread(&revision, sizeof(int), 1, fp);
+	fread(&seen, sizeof(unsigned long long), 1, fp);
+	
+	printf("version %d.%d.%d, seen %u.\n", major, minor, revision, (unsigned int)seen);
+	for (int i = 0; i < net->nlayers; ++i) {
 		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
 		if (type == CONVOLUTIONAL) {
 			convolutional_layer *layer = (convolutional_layer*)net->layers[i];
-			printf("%2d\tconv\t\t%4d x%4d x%4d\t\t%dx%d/%d\t\t%4d\t\t%4d x%4d x%4d\n",
-				i + 1,
-				layer->input_size.w,
-				layer->input_size.h,
-				layer->input_size.c,
-				layer->filter_size,
-				layer->filter_size,
-				layer->stride,
-				layer->nfilters,
-				layer->output_size.w,
-				layer->output_size.h,
-				layer->output_size.c);
-		} else if (type == MAXPOOL) {
-			maxpool_layer *layer = (maxpool_layer *)net->layers[i];
-			printf("%2d\tmaxpool\t\t%4d x%4d x%4d\t\t%dx%d/%d\t\t%4d\t\t%4d x%4d x%4d\n",
-				i + 1,
-				layer->input_size.w,
-				layer->input_size.h,
-				layer->input_size.c,
-				layer->filter_size,
-				layer->filter_size,
-				layer->stride,
-				layer->input_size.c,
-				layer->output_size.w,
-				layer->output_size.h,
-				layer->output_size.c);
-		} else if (type == ROUTE) {
-			route_layer *layer = (route_layer *)net->layers[i];
-			printf("%02d\troute ", i + 1);
-			for (int i = 0; i < layer->nroutes; ++i) {
-				printf("%d", layer->input_layers[i] + 1);
-				if (i < layer->nroutes - 1) printf(",");
-			}
-			printf("\n");
-		} else if (type == RESAMPLE) {
-			resample_layer *layer = (resample_layer *)net->layers[i];
-			printf("%2d\tresample\t%4d x%4d x%4d\t\t%d\t\t\t\t%4d x%4d x%4d\n",
-				i + 1,
-				layer->input_size.w,
-				layer->input_size.h,
-				layer->input_size.c,
-				layer->stride,
-				layer->output_size.w,
-				layer->output_size.h,
-				layer->output_size.c);
-		} else if (type == YOLO) {
-			printf("%02d\tyolo\n", i + 1);
-		} else {
-			fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+			load_convolutional_layer_weights(layer, fp);
 		}
 	}
+	
+	fclose(fp);
+	
+	return 0;
+}
+
+int convnet_get_detect_num(convnet *net)
+{
+	int total = 0;
+	for (int i = 0; i < net->nlayers; ++i) {
+		if (!net->is_output_layer[i]) continue;
+		total += get_yolo_layer_detect_num((yolo_layer *)net->layers[i], net->thresh);
+	}
+	
+	return total;
 }

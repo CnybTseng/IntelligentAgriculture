@@ -31,7 +31,7 @@ extern "C"
  ** @return 如果初始化成功,返回AIC_OK.
  **         如果初始化失败,返回错误码.
  **/
-int ai_core_init();
+int ai_core_init(void *);
 
 /** @brief 将位图推送到AICore模块的队列缓冲区.
  ** @param bmp Bitmap格式图像数据.

@@ -8,7 +8,10 @@ extern "C"
 {
 #endif
 
-void forward_resample_layer(resample_layer *layer, convnet *net);
+void print_resample_layer_info(void *_layer, int id);
+void set_resample_layer_input(void *_layer, float *input);
+float *get_resample_layer_output(void *_layer);
+void forward_resample_layer(void *_layer, convnet *net);
 void backward_resample_layer(resample_layer *layer, convnet *net);
 void upsample(float *in, int width, int height, int nchannels, int stride, float *out);
 

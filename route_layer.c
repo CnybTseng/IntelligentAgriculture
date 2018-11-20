@@ -47,8 +47,9 @@ void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int 
 	return layer;
 }
 
-void free_route_layer(route_layer *layer)
+void free_route_layer(void *_layer)
 {
+	route_layer *layer = (route_layer *)_layer;
 	if (!layer) return;
 	
 	if (layer->input_layers) {
@@ -70,8 +71,31 @@ void free_route_layer(route_layer *layer)
 	layer = NULL;
 }
 
-void forward_route_layer(route_layer *layer, convnet *net)
+void print_route_layer_info(void *_layer, int id)
 {
+	route_layer *layer = (route_layer *)_layer;
+	printf("%02d\troute ", id);
+	for (int i = 0; i < layer->nroutes; ++i) {
+		printf("%d", layer->input_layers[i] + 1);
+		if (i < layer->nroutes - 1) printf(",");
+	}
+	printf("\n");
+}
+
+void set_route_layer_input(void *_layer, float *input)
+{
+
+}
+
+float *get_route_layer_output(void *_layer)
+{
+	route_layer *layer = (route_layer *)_layer;
+	return layer->output;
+}
+
+void forward_route_layer(void *_layer, convnet *net)
+{
+	route_layer *layer = (route_layer *)_layer;
 	int offset = 0;
 	for (int r = 0; r < layer->nroutes; ++r) {
 		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[layer->input_layers[r]]);		

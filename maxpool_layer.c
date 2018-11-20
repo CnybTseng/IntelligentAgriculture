@@ -37,8 +37,9 @@ void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int paddi
 	return (void *)layer;
 }					 
 						 
-void free_maxpool_layer(maxpool_layer *layer)
+void free_maxpool_layer(void *_layer)
 {
+	maxpool_layer *layer = (maxpool_layer *)_layer;
 	if (!layer) return;
 	
 	if (layer->output) {
@@ -50,8 +51,38 @@ void free_maxpool_layer(maxpool_layer *layer)
 	layer = NULL;
 }
 
-void forward_maxpool_layer(maxpool_layer *layer, convnet *net)
+void print_maxpool_layer_info(void *_layer, int id)
 {
+	maxpool_layer *layer = (maxpool_layer *)_layer;
+	printf("%2d\tmaxpool\t\t%4d x%4d x%4d\t\t%dx%d/%d\t\t%4d\t\t%4d x%4d x%4d\n",
+		id,
+		layer->input_size.w,
+		layer->input_size.h,
+		layer->input_size.c,
+		layer->filter_size,
+		layer->filter_size,
+		layer->stride,
+		layer->input_size.c,
+		layer->output_size.w,
+		layer->output_size.h,
+		layer->output_size.c);
+}
+
+void set_maxpool_layer_input(void *_layer, float *input)
+{
+	maxpool_layer *layer = (maxpool_layer *)_layer;
+	layer->input = input;
+}
+
+float *get_maxpool_layer_output(void *_layer)
+{
+	maxpool_layer *layer = (maxpool_layer *)_layer;
+	return layer->output;
+}
+
+void forward_maxpool_layer(void *_layer, convnet *net)
+{
+	maxpool_layer *layer = (maxpool_layer *)_layer;
 	int offsetx = -layer->padding / 2;
 	int offsety = -layer->padding / 2;
 	int inwh = layer->input_size.w * layer->input_size.h;

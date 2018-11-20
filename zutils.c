@@ -34,3 +34,26 @@ void mcopy(const char *const X, char *const Y, size_t size)
 		Y[i] = X[i];
 	}
 }
+
+void save_volume(float *data, int width, int height, int nchannels, const char *path)
+{
+	FILE *fp = fopen(path, "w");
+	if (!fp) {
+		fprintf(stderr, "fopen[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	for (int c = 0; c < nchannels; ++c) {
+		fprintf(fp, "channel=%d\n", c);
+		float *at = data + c * width * height;
+		for (int y = 0; y < height; ++y) {
+			for (int x = 0; x < width; ++x) {
+				fprintf(fp, "%.7f ", at[y * width + x]);
+			}
+			fputs("\n", fp);
+		}
+		fputs("\n\n\n", fp);
+	}
+
+	fclose(fp);
+}

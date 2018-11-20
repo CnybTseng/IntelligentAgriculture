@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include "aicore.h"
 
-int ai_core_init()
+int ai_core_init(void *param)
 {
 	printf("call ai_core_init\n");
 	return AIC_OK;

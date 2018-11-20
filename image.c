@@ -1,4 +1,5 @@
 #include "image.h"
+#include "zutils.h"
 
 image *create_image(int width, int height, int nchannels)
 {
@@ -33,23 +34,23 @@ void free_image(image *img)
 	img = NULL;
 }
 
-void split(const unsigned char *const src, float *const dst, int width, int height, int nchannels)
+void split_channel(const unsigned char *const src, image *dst)
 {
-	for (int c = 0; c < nchannels; ++c) {
-		float *at = dst + c * width * height;
-		for (int y = 0; y < height; ++y) {
-			for (int x = 0; x < width; ++x) {
-				at[y * width + x] = src[nchannels * (y * width + x) + c];
+	for (int c = 0; c < dst->c; ++c) {
+		float *at = dst->data + c * dst->w * dst->h;
+		for (int y = 0; y < dst->h; ++y) {
+			for (int x = 0; x < dst->w; ++x) {
+				at[y * dst->w + x] = src[dst->c * (y * dst->w + x) + c];
 			}
 		}
 	}
 }
 
-void resize_image(image src, image *dst)
+void resize_image(image *src, image *dst)
 {
-	float s = src.w / dst->w;
+	float s = (float)src->w / dst->w;
 	for (int c = 0; c < dst->c; ++c) {
-		float *src_at = src.data + c * src.w * src.h;
+		float *src_at = src->data + c * src->w * src->h;
 		float *dst_at = dst->data + c * dst->w * dst->h;
 		for (int y = 0; y < dst->h; ++y) {
 			for (int x = 0; x < dst->w; ++x) {
@@ -57,12 +58,31 @@ void resize_image(image src, image *dst)
 				float sy = s * y;
 				int left = (int)sx;
 				int top = (int)sy;
-				float i1 = (sx - left) * src_at[top * src.w + left + 1] +
-					(left + 1 - sx) * src_at[top * src.w + left];
-				float i2 = (sx - left) * src_at[(top + 1) * src.w + left + 1] +
-					(left + 1 - sx) * src_at[(top + 1) * src.w + left];
+				float i1 = (sx - left) * src_at[top * src->w + left + 1] +
+				       (left + 1 - sx) * src_at[top * src->w + left];
+				float i2 = (sx - left) * src_at[(top + 1) * src->w + left + 1] +
+					   (left + 1 - sx) * src_at[(top + 1) * src->w + left];
 				dst_at[y * dst->w + x] = (sy - top) * i2 + (top + 1 - sy) * i1;
 			}
 		}
 	}
+}
+
+void embed_image(image *src, image *dst)
+{
+	int dx = (dst->w - src->w) / 2;
+	int dy = (dst->h - src->h) / 2;
+	for (int c = 0; c < src->c; ++c) {
+		for (int y = 0; y < src->h; ++y) {
+			for (int x = 0; x < src->w; ++x) {
+				dst->data[(y + dy) * dst->w + x + dx] = src->data[y * src->w + x] / 255;
+			}
+		}
+	}
+}
+
+void set_image(image *img, float val)
+{
+	size_t size = img->w * img->h * img->c * sizeof(float);
+	mset((char *const)img->data, size, (const char *const)&val, sizeof(float));
 }
