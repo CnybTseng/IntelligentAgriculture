@@ -95,8 +95,8 @@ void vertical_mirror(image *img)
 		for (int y = 0; y < hh; ++y) {
 			for (int x = 0; x < img->w; ++x) {
 				float swap = at[y * img->w + x];
-				at[y * img->w + x] = at[(img->h - y) * img->w + x];
-				at[(img->h - y) * img->w + x] = swap;
+				at[y * img->w + x] = at[(img->h - 1 - y) * img->w + x];
+				at[(img->h - 1 - y) * img->w + x] = swap;
 			}
 		}
 	}
