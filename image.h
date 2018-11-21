@@ -15,6 +15,8 @@ void split_channel(const unsigned char *const src, image *dst);
 void resize_image(image *src, image *dst);
 void embed_image(image *src, image *dst);
 void set_image(image *img, float val);
+void vertical_mirror(image *img);
+void swap_channel(image *img);
 
 #ifdef __cplusplus
 }

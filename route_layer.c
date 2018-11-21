@@ -1,5 +1,6 @@
 #include "route_layer.h"
 #include "convolutional_layer.h"
+#include "resample_layer.h"
 #include "zutils.h"
 
 void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int nroutes)

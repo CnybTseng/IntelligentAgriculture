@@ -86,3 +86,30 @@ void set_image(image *img, float val)
 	size_t size = img->w * img->h * img->c * sizeof(float);
 	mset((char *const)img->data, size, (const char *const)&val, sizeof(float));
 }
+
+void vertical_mirror(image *img)
+{
+	int hh = img->h >> 1;
+	for (int c = 0; c < img->c; ++c) {
+		float *at = img->data + c * img->w * img->h;
+		for (int y = 0; y < hh; ++y) {
+			for (int x = 0; x < img->w; ++x) {
+				float swap = at[y * img->w + x];
+				at[y * img->w + x] = at[(img->h - y) * img->w + x];
+				at[(img->h - y) * img->w + x] = swap;
+			}
+		}
+	}
+}
+
+void swap_channel(image *img)
+{
+	int offset = img->w * img->h * 2;
+	for (int y = 0; y < img->h; ++y) {
+		for (int x = 0; x < img->w; ++x) {
+			float swap = img->data[y * img->w + x];
+			img->data[y * img->w + x] = img->data[y * img->w + x + offset];
+			img->data[y * img->w + x + offset] = swap;
+		}
+	}
+}

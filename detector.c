@@ -8,6 +8,7 @@
 #include "activation.h"
 #include "convolutional_layer.h"
 #include "maxpool_layer.h"
+#include "resample_layer.h"
 #include "bmp.h"
 #include "image.h"
 
@@ -25,6 +26,7 @@ void test_bmp(int argc, char *argv[]);
 void test_split(int argc, char *argv[]);
 void test_resize(int argc, char *argv[]);
 void test_embed(int argc, char *argv[]);
+void test_standard(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
@@ -66,6 +68,8 @@ image *load_test_image()
 	}
 	
 	split_channel(bmp->data, splited);
+	vertical_mirror(splited);
+	swap_channel(splited);
 	resize_image(splited, rsz_splited);
 	
 	image *standard = create_image(416, 416, nchannels);
@@ -114,47 +118,48 @@ void test_convnet(int argc, char *argv[])
 	dim3 output_size;
 	
 	dim3 input_size = {416, 416, 3};
-	layers[0] = make_convolutional_layer(RELU, input_size, 3, 16, 1, 1, 1, 1, &output_size);
+	layers[0] = make_convolutional_layer(LEAKY, input_size, 3, 16, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[1] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[2] = make_convolutional_layer(RELU, input_size, 3, 32, 1, 1, 1, 1, &output_size);
+	layers[2] = make_convolutional_layer(LEAKY, input_size, 3, 32, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[3] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[4] = make_convolutional_layer(RELU, input_size, 3, 64, 1, 1, 1, 1, &output_size);
+	layers[4] = make_convolutional_layer(LEAKY, input_size, 3, 64, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[5] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[6] = make_convolutional_layer(RELU, input_size, 3, 128, 1, 1, 1, 1, &output_size);
+	layers[6] = make_convolutional_layer(LEAKY, input_size, 3, 128, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[7] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[8] = make_convolutional_layer(RELU, input_size, 3, 256, 1, 1, 1, 1, &output_size);
+	layers[8] = make_convolutional_layer(LEAKY, input_size, 3, 256, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[9] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[10] = make_convolutional_layer(RELU, input_size, 3, 512, 1, 1, 1, 1, &output_size);
+	layers[10] = make_convolutional_layer(LEAKY, input_size, 3, 512, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[11] = make_maxpool_layer(input_size, 2, 1, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[12] = make_convolutional_layer(RELU, input_size, 3, 1024, 1, 1, 1, 1, &output_size);
+	layers[12] = make_convolutional_layer(LEAKY, input_size, 3, 1024, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
-	layers[13] = make_convolutional_layer(RELU, input_size, 1, 256, 1, 0, 1, 1, &output_size);
+	layers[13] = make_convolutional_layer(LEAKY, input_size, 1, 256, 1, 0, 1, 1, &output_size);
 	input_size = output_size;
-	layers[14] = make_convolutional_layer(RELU, input_size, 3, 512, 1, 1, 1, 1, &output_size);
+	layers[14] = make_convolutional_layer(LEAKY, input_size, 3, 512, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 0, &output_size);
 	
 	input_size = output_size;
 	int bigger_mask[] = {3, 4, 5};
-	layers[16] = make_yolo_layer(input_size, 1, 3, 6, 80, bigger_mask);
+	int anchor_boxes[] = {10,14,  23,27,  37,58,  81,82,  135,169,  344,319};
+	layers[16] = make_yolo_layer(input_size, 1, 3, 6, 80, bigger_mask, anchor_boxes);
 	
 	int input_layers[] = {13};
 	convolutional_layer *layer = (convolutional_layer *)layers[13];
@@ -162,7 +167,7 @@ void test_convnet(int argc, char *argv[])
 	layers[17] = make_route_layer(1, input_layers, input_sizes, 1);
 	
 	input_size = layer->output_size;
-	layers[18] = make_convolutional_layer(RELU, input_size, 1, 128, 1, 0, 1, 1, &output_size);
+	layers[18] = make_convolutional_layer(LEAKY, input_size, 1, 128, 1, 0, 1, 1, &output_size);
 	
 	input_size = output_size;
 	layers[19] = make_resample_layer(input_size, 1, 2, &output_size);
@@ -181,35 +186,44 @@ void test_convnet(int argc, char *argv[])
 	input_size.c = layer->output_size.c;
 	rsl = (resample_layer *)layers[route_layers[0]];
 	input_size.c += rsl->output_size.c;
-	layers[21] = make_convolutional_layer(RELU, input_size, 3, 256, 1, 1, 1, 1, &output_size);
+	layers[21] = make_convolutional_layer(LEAKY, input_size, 3, 256, 1, 1, 1, 1, &output_size);
 	
 	input_size = output_size;
 	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 0, &output_size);
 	
 	input_size = output_size;
 	int smaller_mask[] = {0, 1, 2};
-	layers[23] = make_yolo_layer(input_size, 1, 3, 6, 80, smaller_mask);
+	layers[23] = make_yolo_layer(input_size, 1, 3, 6, 80, smaller_mask, anchor_boxes);
 	
 	convnet *net = convnet_create(layers, nlayers);
+	if (!net) return;
+	
 	convnet_architecture(net);
-#if 0	
+#if 1	
 	image *standard = load_test_image();
 	if (!standard) {
 		convnet_destroy(net);
 		return;
 	}
-	
-	FILE *fp = fopen("standard.bin", "wb");
-	fwrite(standard->data, sizeof(float), standard->w * standard->h * standard->c, fp);
-	fclose(fp);
-#endif
+#else
 	image *standard = create_image(416, 416, 3);
-	FILE *fp = fopen("standard2.bin", "rb");
+	FILE *fp = fopen("standard.bin", "rb");
 	fread(standard->data, sizeof(float), standard->w * standard->h * standard->c, fp);
 	fclose(fp);
-	
+#endif	
 	convnet_inference(net, standard);
-	get_detections(net, 0.5, 416, 416, NULL);
+	get_detections(net, 0.5, 768, 576, NULL);
+	
+	char *red = calloc(standard->w * standard->h, sizeof(char));	
+	for (int i = 0; i < standard->w * standard->h; ++i) {
+		red[i] = (char)(standard->data[i] * 255);
+	}
+	
+	BMP *bmp = bmp_create(red, standard->w, standard->h, 8);
+	bmp_write(bmp, "red.bmp");
+	
+	free(red);
+	bmp_delete(bmp);
 	
 	free_image(standard);
 	convnet_destroy(net);
@@ -360,7 +374,7 @@ void test_activate(int argc, char *argv[])
 		printf("%.5f ", output[i]);
 	}
 	
-	activate(output, 16, RELU);
+	activate(output, 16, LEAKY);
 	
 	printf("\n");
 	for (int i = 0; i < 16; i++) {
@@ -525,6 +539,13 @@ void test_bmp(int argc, char *argv[])
 	}
 	
 	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
+	
+	for (int x = 0; x < bmp->width; ++x) {
+		bmp->data[3 * x] = 0;
+		bmp->data[3 * x + 1] = 0;
+		bmp->data[3 * x + 2] = 0;
+	}
+	
 	bmp_write(bmp, "girl.bmp");
 	bmp_delete(bmp);
 }
@@ -711,4 +732,24 @@ void test_embed(int argc, char *argv[])
 	free_image(standard);
 	bmp_delete(bmp);
 	bmp_delete(red_bmp);
+}
+
+void test_standard(int argc, char *argv[])
+{
+	image *standard = create_image(416, 416, 3);
+	FILE *fp = fopen("standard.bin", "rb");
+	fread(standard->data, sizeof(float), 416 * 416 * 3, fp);
+	fclose(fp);
+	
+	char *red = calloc(standard->w * standard->h, sizeof(char));	
+	for (int i = 0; i < standard->w * standard->h; ++i) {
+		red[i] = (char)(standard->data[i] * 255);
+	}
+	
+	BMP *bmp = bmp_create(red, standard->w, standard->h, 8);
+	bmp_write(bmp, "red.bmp");
+	
+	free(red);
+	bmp_delete(bmp);
+	free_image(standard);
 }

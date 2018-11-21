@@ -18,7 +18,7 @@ typedef enum {
 } LAYER_TYPE;
 
 typedef enum {
-	RELU, LINEAR, LOGISTIC
+	RELU, LEAKY, LINEAR, LOGISTIC
 } ACTIVATION;
 
 typedef struct {
@@ -44,7 +44,8 @@ struct convnet {
 	void **layers;
 	float *input;
 	float *output;
-	float thresh;
+	int width;
+	int height;
 	PRINT_LAYER_INFO *print_layer_info;
 	SET_LAYER_INPUT *set_layer_input;
 	GET_LAYER_OUTPUT *get_layer_output;
@@ -56,92 +57,6 @@ struct convnet {
 typedef struct {
 	int w, h, c;
 } dim3;
-
-typedef struct {
-	LAYER_TYPE type;
-	ACTIVATION activation;
-	dim3 input_size;
-	dim3 output_size;
-	int filter_size;
-	int nfilters;
-	int stride;
-	int padding;
-	int batch_size;
-	int batch_norm;
-	int nweights;
-	int nbiases;
-	int ninputs;
-	int vmsize;
-	int noutputs;
-	float *weights;
-	float *scales;
-	float *biases;
-	float *rolling_mean;
-	float *rolling_variance;
-	float *input;
-	float *vecmat;
-	float *output;
-	void (*forward)(void *layer, convnet *net);
-	void (*backward)(void *layer, convnet *net);
-	void (*destroy)(void *layer);
-} convolutional_layer;
-
-typedef struct {
-	LAYER_TYPE type;
-	dim3 input_size;
-	dim3 output_size;
-	int filter_size;
-	int stride;
-	int padding;
-	int batch_size;
-	int ninputs;
-	int noutputs;
-	float *input;
-	float *output;
-	void (*forward)(void *layer, convnet *net);
-	void (*backward)(void *layer, convnet *net);
-	void (*destroy)(void *layer);
-} maxpool_layer;
-
-typedef struct {
-	LAYER_TYPE type;
-	int batch_size;
-	int ninputs;
-	int noutputs;
-	int nroutes;
-	int *input_layers;
-	int *input_sizes;
-	float *output;
-} route_layer;
-
-typedef struct {
-	LAYER_TYPE type;
-	dim3 input_size;
-	dim3 output_size;
-	int stride;
-	int batch_size;
-	int ninputs;
-	int noutputs;
-	int upsample;
-	float *input;
-	float *output;
-} resample_layer;
-
-typedef struct {
-	LAYER_TYPE type;
-	dim3 input_size;
-	dim3 output_size;
-	int batch_size;
-	int ninputs;
-	int noutputs;
-	int nscales;
-	int total_scales;
-	int classes;
-	int *mask;
-	int *biases;
-	float *input;
-	float *output;
-} yolo_layer;
 
 typedef struct {
 	int w;
@@ -161,20 +76,16 @@ typedef struct {
 	float objectness;
 } detection;
 
-/** @name 卷积网络层的创建和销毁.
+/** @name 卷积网络层的创建.目前仅支持卷积层,最大池化层,重采样层,路线层和瞄一眼层.
  ** @ { */
 void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
                                int stride, int padding, int batch_size, int batch_norm, dim3 *output_size);
-void free_convolution_layer(void *_layer);
 void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int padding, int batch_size,
                          dim3 *output_size);
-void free_maxpool_layer(void *_layer);
-void *make_yolo_layer(dim3 input_size, int batch_size, int nscales, int total_scales, int classes, int *mask);
-void free_yolo_layer(void *_layer);
+void *make_yolo_layer(dim3 input_size, int batch_size, int nscales, int total_scales, int classes, int *mask,
+                      int *anchor_boxes);
 void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int nroutes);
-void free_route_layer(void *_layer);
 void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *output_size);
-void free_resample_layer(void *_layer);
 /** @ }*/
 
 /** @name 卷积网络的创建, 训练, 推断, 销毁等操作.

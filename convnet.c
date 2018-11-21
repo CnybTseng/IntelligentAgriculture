@@ -7,9 +7,9 @@
 #include "resample_layer.h"
 #include "yolo_layer.h"
 
+static int convnet_parse_input_size(convnet *net);
 static int convnet_parse_layer(convnet *net);
 static int convnet_parse_weights(convnet *net);
-static int convnet_get_detect_num(convnet *net);
 
 convnet *convnet_create(void *layers[], int nlayers)
 {
@@ -24,7 +24,6 @@ convnet *convnet_create(void *layers[], int nlayers)
 	net->layers = layers;
 	net->input = NULL;
 	net->output = NULL;
-	net->thresh = 0.5f;
 	net->print_layer_info = NULL;
 	net->set_layer_input = NULL;
 	net->get_layer_output = NULL;
@@ -68,10 +67,12 @@ convnet *convnet_create(void *layers[], int nlayers)
 		goto cleanup;
 	}
 	
+	if (convnet_parse_input_size(net)) goto cleanup;
 	if (convnet_parse_layer(net)) goto cleanup;
 	
 	if (convnet_parse_weights(net)) {
 		cleanup:convnet_destroy(net);
+		return NULL;
 	}
 	
 	return net;
@@ -134,7 +135,7 @@ void convnet_destroy(convnet *net)
 		free(net->is_output_layer);
 		net->is_output_layer = NULL;
 	}
-	
+
 	free(net);
 	net = NULL;
 }
@@ -149,9 +150,27 @@ void convnet_architecture(convnet *net)
 
 detection *get_detections(convnet *net, float thresh, int width, int height, int *ndets)
 {
-	int num = convnet_get_detect_num(net);
-	printf("detections %d\n", num);
+	for (int i = 0; i < net->nlayers; ++i) {
+		if (!net->is_output_layer[i]) continue;
+		get_yolo_layer_detections((yolo_layer *)net->layers[i], net, width, height, thresh);
+	}
+	
 	return NULL;
+}
+
+int convnet_parse_input_size(convnet *net)
+{
+	LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[0]);
+	if (type != CONVOLUTIONAL) {
+		fprintf(stderr, "the first layer isn't convolutional layer!");
+		return -1;
+	}
+	
+	convolutional_layer *layer = (convolutional_layer *)net->layers[0];
+	net->width = layer->input_size.w;
+	net->height = layer->input_size.h;
+	
+	return 0;
 }
 
 int convnet_parse_layer(convnet *net)
@@ -228,15 +247,4 @@ int convnet_parse_weights(convnet *net)
 	fclose(fp);
 	
 	return 0;
-}
-
-int convnet_get_detect_num(convnet *net)
-{
-	int total = 0;
-	for (int i = 0; i < net->nlayers; ++i) {
-		if (!net->is_output_layer[i]) continue;
-		total += get_yolo_layer_detect_num((yolo_layer *)net->layers[i], net->thresh);
-	}
-	
-	return total;
 }

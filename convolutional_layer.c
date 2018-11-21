@@ -194,11 +194,6 @@ void forward_convolutional_layer(void *_layer, convnet *net)
 	}
 	
 	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
-	
-	static int timer = 0;
-	char filename[128];
-	sprintf(filename, "conv_%d.txt", timer++);
-	save_volume(layer->output, layer->output_size.w, layer->output_size.h, layer->output_size.c, filename);
 }
 
 void backward_convolutional_layer(convolutional_layer *layer, convnet *net)
@@ -214,40 +209,8 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 		fread(layer->rolling_mean, sizeof(float), layer->nfilters, fp);
 		fread(layer->rolling_variance, sizeof(float), layer->nfilters, fp);
 	}
+	
 	fread(layer->weights, sizeof(float), layer->nweights, fp);
-	
-	/*static int id = 0;
-	char filename[128];
-	sprintf(filename, "conv_%d.txt", id);
-	FILE *fp2 = fopen(filename, "w");
-	
-	fputs("biases: ", fp2);
-	for (int i = 0; i < layer->nfilters; ++i) {
-		fprintf(fp2, "%f ", layer->biases[i]);
-	}
-	
-	fputs("\nscales: ", fp2);
-	for (int i = 0; i < layer->nfilters; ++i) {
-		fprintf(fp2, "%f ", layer->scales[i]);
-	}
-	
-	fputs("\nrolling_mean: ", fp2);
-	for (int i = 0; i < layer->nfilters; ++i) {
-		fprintf(fp2, "%f ", layer->rolling_mean[i]);
-	}
-	
-	fputs("\nrolling_variance: ", fp2);
-	for (int i = 0; i < layer->nfilters; ++i) {
-		fprintf(fp2, "%f ", layer->rolling_variance[i]);
-	}
-	
-	fputs("\nweights: ", fp2);
-	for (int i = 0; i < layer->nweights; ++i) {
-		fprintf(fp2, "%f ", layer->weights[i]);
-	}
-	
-	id++;
-	fclose(fp2);*/
 }
 
 int convolutional_output_width(convolutional_layer *layer)

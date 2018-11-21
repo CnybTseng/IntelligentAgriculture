@@ -8,6 +8,36 @@ extern "C"
 {
 #endif
 
+typedef struct {
+	LAYER_TYPE type;
+	ACTIVATION activation;
+	dim3 input_size;
+	dim3 output_size;
+	int filter_size;
+	int nfilters;
+	int stride;
+	int padding;
+	int batch_size;
+	int batch_norm;
+	int nweights;
+	int nbiases;
+	int ninputs;
+	int vmsize;
+	int noutputs;
+	float *weights;
+	float *scales;
+	float *biases;
+	float *rolling_mean;
+	float *rolling_variance;
+	float *input;
+	float *vecmat;
+	float *output;
+	void (*forward)(void *layer, convnet *net);
+	void (*backward)(void *layer, convnet *net);
+	void (*destroy)(void *layer);
+} convolutional_layer;
+
+void free_convolution_layer(void *_layer);
 void print_convolutional_layer_info(void *_layer, int id);
 void set_convolutional_layer_input(void *_layer, float *input);
 float *get_convolutional_layer_output(void *_layer);
