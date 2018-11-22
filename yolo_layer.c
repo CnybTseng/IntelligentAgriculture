@@ -3,6 +3,7 @@
 #include "yolo_layer.h"
 #include "activation.h"
 #include "zutils.h"
+#include "list.h"
 
 static box get_yolo_box(float *box_volume, int id, int layer_width, int layer_height,
                         int net_width, int net_height, int *anchor_box,
@@ -122,9 +123,8 @@ void forward_yolo_layer(void *_layer, convnet *net)
 	}
 }
 
-void get_yolo_layer_detections(yolo_layer *layer, convnet *net, int imgw, int imgh, float thresh)
+void get_yolo_layer_detections(yolo_layer *layer, convnet *net, int imgw, int imgh, float thresh, list *l)
 {
-	int counter = 1;
 	int size = layer->output_size.w * layer->output_size.h;
 	int volume_per_scale = size * (4 + 1 + layer->classes);
 	for (int s = 0; s < layer->nscales; ++s) {
@@ -133,25 +133,32 @@ void get_yolo_layer_detections(yolo_layer *layer, convnet *net, int imgw, int im
 		float *prob_vol = layer->output + s * volume_per_scale + 5 * size;
 		for (int i = 0; i < size; ++i) {
 			if (obj_slc[i] < thresh) continue;
-			detection det;
-			det.bbox = get_yolo_box(box_vol, i, layer->output_size.w, layer->output_size.h,
+			detection *det = list_alloc(sizeof(detection));
+			if (!det) continue;
+			det->bbox = get_yolo_box(box_vol, i, layer->output_size.w, layer->output_size.h,
 				net->width, net->height, &layer->anchor_boxes[2 * layer->mask[s]], imgw, imgh);
-			det.classes = layer->classes;
-			det.probabilities = get_yolo_prob(prob_vol, i, layer->output_size.w, layer->output_size.h,
+			det->classes = layer->classes;
+			det->probabilities = get_yolo_prob(prob_vol, i, layer->output_size.w, layer->output_size.h,
 				layer->classes, obj_slc[i]);
-			det.objectness = obj_slc[i];
-			
-			printf("%d bbox[%f,%f,%f,%f] classes[%d] objectness[%f] probabilities[",
-				counter, det.bbox.x, det.bbox.y, det.bbox.w, det.bbox.h, det.classes, det.objectness);
-			for (int j = 0; j < det.classes; ++j) {
-				printf("%.1f ", det.probabilities[j]);
-			}
-			
-			printf("\n\n");
-			counter++;
-			free(det.probabilities);
+			det->objectness = obj_slc[i];
+			list_add_tail(l, det);		
 		}
 	}
+}
+
+void free_yolo_layer_detections(list *l)
+{
+	node *nd = l->head;
+	while (nd) {
+		detection *det = (detection *)nd->val;
+		if (det->probabilities) {
+			free(det->probabilities);
+			det->probabilities = NULL;
+		}
+		nd = nd->next;
+	}
+	
+	list_clear(l);
 }
 
 void backward_yolo_layer(yolo_layer *layer, convnet *net)

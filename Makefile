@@ -45,6 +45,9 @@ INC+= -I../thirdparty/opencl-1.1/include
 endif
 
 CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g
+ifeq ($(X86),1)
+CFLAGS+= -msse2 -msse3 -msse4.1
+endif
 ifeq ($(ARM),1)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99
 endif

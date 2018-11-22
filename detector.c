@@ -11,8 +11,17 @@
 #include "resample_layer.h"
 #include "bmp.h"
 #include "image.h"
+#include "list.h"
+#include "coco.names"
 
-image *load_test_image();
+typedef struct {
+	BMP *original;
+	image *standard;
+} test_image;
+
+extern void split_channel_sse2(const unsigned char *const src, unsigned char *dst, int w, int h);
+test_image load_test_image(int argc, char *argv[], int width, int height);
+void draw_detections(BMP *bmp, list *detections, char *names[], float thresh);
 void test_multi_free(int argc, char *argv[]);
 void test_convnet(int argc, char *argv[]);
 void test_im2col(int argc, char *argv[]);
@@ -27,20 +36,23 @@ void test_split(int argc, char *argv[]);
 void test_resize(int argc, char *argv[]);
 void test_embed(int argc, char *argv[]);
 void test_standard(int argc, char *argv[]);
+void test_list(int argc, char *argv[]);
+void test_split_sse(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_convnet(argc, argv);
+	test_split_sse(argc, argv);
 	
 	return 0;
 }
 
-image *load_test_image()
+test_image load_test_image(int argc, char *argv[], int width, int height)
 {
-	BMP *bmp = bmp_read("dog.bmp");
+	test_image ti = {NULL, NULL};
+	BMP *bmp = bmp_read(argv[1]);
 	if (!bmp) {
 		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
-		return NULL;
+		return ti;
 	}
 	
 	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
@@ -50,45 +62,95 @@ image *load_test_image()
 	if (!splited) {
 		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
 		bmp_delete(bmp);
-		return NULL;
+		return ti;
 	}
 	
-	float sx = 416.0f / bmp->width;
-	float sy = 416.0f / bmp->height;
-	float s = sx < sy ? sx : sy;
-	int rsz_width = (int)(bmp->width * s);
-	int rsz_height = (int)(bmp->height * s);
+	int rsz_width, rsz_height;
+	if (width / (float)bmp->width < height / (float)bmp->height) {
+		rsz_width = width;
+		rsz_height = (int)(bmp->height * width / (float)bmp->width);
+	} else {
+		rsz_width = (int)(bmp->width * height / (float)bmp->height);
+		rsz_height = height;
+	}
 	
 	image *rsz_splited = create_image(rsz_width, rsz_height, nchannels);
 	if (!rsz_splited) {
 		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
 		bmp_delete(bmp);
 		free_image(splited);
-		return NULL;
+		return ti;
 	}
 	
 	split_channel(bmp->data, splited);
-	vertical_mirror(splited);
-	swap_channel(splited);
 	resize_image(splited, rsz_splited);
 	
-	image *standard = create_image(416, 416, nchannels);
+	image *standard = create_image(width, height, nchannels);
 	if (!standard) {
 		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
 		bmp_delete(bmp);
 		free_image(splited);
 		free_image(rsz_splited);
-		return NULL;
+		return ti;
 	}
 	
 	set_image(standard, 0.5);
 	embed_image(rsz_splited, standard);
 	
-	bmp_delete(bmp);
 	free_image(splited);
 	free_image(rsz_splited);
+	
+	ti.original = bmp;
+	ti.standard = standard;
+	
+	return ti;
+}
+
+void draw_detections(BMP *bmp, list *detections, char *names[], float thresh)
+{
+	int nchannels = bmp->bit_count >> 3;
+	node *n = detections->head;
+	while (n) {
+		detection *det = (detection *)n->val;
+		int maybe = 0;
+		for (int i = 0; i < det->classes; ++i) {
+			if (det->probabilities[i] < thresh) continue;
+			if (maybe > 0) printf(",");
+			printf("%s:%.0f%%", names[i], det->probabilities[i] * 100);
+			++maybe;
+		}
 		
-	return standard;
+		if (maybe) printf("\n");
+		int left    = (int)((det->bbox.x - det->bbox.w / 2) * bmp->width);		
+		int right   = (int)((det->bbox.x + det->bbox.w / 2) * bmp->width);
+		int _top    = (int)((det->bbox.y - det->bbox.h / 2) * bmp->height);
+		int _bottom = (int)((det->bbox.y + det->bbox.h / 2) * bmp->height);
+		int top = bmp->height - 1 - _bottom;
+		int bottom = bmp->height - 1 - _top;
+		
+		if (left < 0) left = 0;
+		if (left > bmp->width - 1) left = bmp->width - 1;
+		if (right < 0) right = 0;
+		if (right > bmp->width - 1) right = bmp->width - 1;
+		if (top < 0) top = 0;
+		if (top > bmp->height - 1) top = bmp->height - 1;
+		if (bottom < 0) bottom = 0;
+		if (bottom > bmp->height - 1) bottom = bmp->height - 1;
+		
+		for (int c = 0; c < nchannels; ++c) {
+			for (int y = top; y < bottom; ++y) {
+				bmp->data[(y * bmp->width + left) * nchannels + c] = 255;
+				bmp->data[(y * bmp->width + right) * nchannels + c] = 255;
+			}
+			
+			for (int x = left; x < right; ++x) {
+				bmp->data[(top * bmp->width + x) * nchannels + c] = 255;
+				bmp->data[(bottom * bmp->width + x) * nchannels + c] = 255;
+			}
+		}
+		
+		n = n->next;
+	}
 }
 
 void test_multi_free(int argc, char *argv[])
@@ -113,6 +175,11 @@ void test_multi_free(int argc, char *argv[])
 
 void test_convnet(int argc, char *argv[])
 {	
+	if (argc < 2) {
+		fprintf(stderr, "Usage: detector [bitmap filename] [thresh]\n");
+		return;
+	}
+
 	void *layers[24];
 	int nlayers = sizeof(layers) / sizeof(layers[0]);
 	dim3 output_size;
@@ -199,32 +266,34 @@ void test_convnet(int argc, char *argv[])
 	if (!net) return;
 	
 	convnet_architecture(net);
-#if 1	
-	image *standard = load_test_image();
-	if (!standard) {
+	
+	test_image ti = load_test_image(argc, argv, 416, 416);
+	if (!ti.original || !ti.standard) {
 		convnet_destroy(net);
 		return;
 	}
-#else
-	image *standard = create_image(416, 416, 3);
-	FILE *fp = fopen("standard.bin", "rb");
-	fread(standard->data, sizeof(float), standard->w * standard->h * standard->c, fp);
-	fclose(fp);
-#endif	
-	convnet_inference(net, standard);
-	get_detections(net, 0.5, 768, 576, NULL);
+		
+	BMP *original = ti.original;
+	image *standard = ti.standard;
 	
-	char *red = calloc(standard->w * standard->h, sizeof(char));	
-	for (int i = 0; i < standard->w * standard->h; ++i) {
-		red[i] = (char)(standard->data[i] * 255);
-	}
-	
-	BMP *bmp = bmp_create(red, standard->w, standard->h, 8);
-	bmp_write(bmp, "red.bmp");
-	
+	unsigned char *red = calloc(standard->w * standard->h, sizeof(unsigned char));
+	for (int i = 0; i < standard->w * standard->h; ++i)
+		red[i] = (unsigned char)(standard->data[i] * 255);
+	BMP *red_bmp = bmp_create((const char *)red, standard->w, standard->h, 8);
+	bmp_write(red_bmp, "standard.bmp");
+	bmp_delete(red_bmp);
 	free(red);
-	bmp_delete(bmp);
 	
+	convnet_inference(net, standard);
+	float thresh = 0.5f;
+	if (argc > 2) thresh = atof(argv[2]);
+	
+	list *detections = get_detections(net, thresh, original->width, original->height);	
+	draw_detections(original, detections, names, thresh);
+	bmp_write(original, "detections.bmp");
+	
+	free_detections(detections);
+	bmp_delete(original);
 	free_image(standard);
 	convnet_destroy(net);
 }
@@ -552,7 +621,7 @@ void test_bmp(int argc, char *argv[])
 
 void test_split(int argc, char *argv[])
 {
-	BMP *bmp = bmp_read("dog.bmp");
+	BMP *bmp = bmp_read("horses.bmp");
 	if (!bmp) {
 		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
 		return;
@@ -607,7 +676,7 @@ void test_split(int argc, char *argv[])
 
 void test_resize(int argc, char *argv[])
 {
-	BMP *bmp = bmp_read("dog.bmp");
+	BMP *bmp = bmp_read("horses.bmp");
 	if (!bmp) {
 		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
 		return;
@@ -665,7 +734,7 @@ void test_resize(int argc, char *argv[])
 
 void test_embed(int argc, char *argv[])
 {
-	BMP *bmp = bmp_read("dog.bmp");
+	BMP *bmp = bmp_read("horses.bmp");
 	if (!bmp) {
 		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
 		return;
@@ -720,7 +789,7 @@ void test_embed(int argc, char *argv[])
 	}
 	
 	for (int i = 0; i < standard->w * standard->h; ++i) {
-		red[i] = (char)standard->data[i];
+		red[i] = (char)(standard->data[i] * 255);
 	}
 	
 	BMP *red_bmp = bmp_create(red, standard->w, standard->h, 8);
@@ -752,4 +821,75 @@ void test_standard(int argc, char *argv[])
 	free(red);
 	bmp_delete(bmp);
 	free_image(standard);
+}
+
+void test_list(int argc, char *argv[])
+{
+	list *detections = make_list();
+	if (!detections) return;
+	
+	int bx = 5;
+	int by = 6;
+	int bw = 7;
+	int bh = 8;
+	
+	srand(time(NULL));
+	for (int i = 0; i < 10; ++i) {
+		detection *det = list_alloc(sizeof(detection));
+		if (!det) break;
+		det->bbox.x = (i + 1) * bx;
+		det->bbox.y = (i + 1) * by;
+		det->bbox.w = (i + 1) * bw;
+		det->bbox.h = (i + 1) * bh;
+		det->classes = 80;
+		det->probabilities = calloc(det->classes, sizeof(float));
+		if (!det->probabilities) break;
+		for (int j = 0; j < det->classes; ++j)
+			det->probabilities[j] = rand() / (double)RAND_MAX;
+		det->objectness = rand() / (double)RAND_MAX;
+		if (list_add_tail(detections, det)) break;
+	}
+	
+	int count = 0;
+	node *nd = detections->head;
+	while (nd) {
+		detection *det = (detection *)nd->val;
+		printf("%d   %.2f:%.2f:%.2f:%.2f   %d   ", ++count, det->bbox.x, det->bbox.y, det->bbox.w,
+			det->bbox.h, det->classes);
+		for (int i = 0; i < det->classes; ++i)
+			printf("%.2f:", det->probabilities[i]);
+		printf("   %f\n\n\n", det->objectness);
+		nd = nd->next;
+	}
+	
+	nd = detections->head;
+	while (nd) {
+		detection *det = (detection *)nd->val;
+		if (det->probabilities) {
+			free(det->probabilities);
+			det->probabilities = NULL;
+		}
+		nd = nd->next;
+	}
+	
+	list_clear(detections);
+}
+
+void test_split_sse(int argc, char *argv[])
+{
+	BMP *bmp = bmp_read("dog.bmp");
+	if (!bmp) {
+		fprintf(stderr, "bmp_read[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
+	
+	printf("bitmap: width %u, height %u, bit_count %u.\n", bmp->width, bmp->height, bmp->bit_count);
+	char *splited = calloc(bmp->width * bmp->height * 3, 1);
+	split_channel_sse2(bmp->data, (unsigned char *)splited, bmp->width, bmp->height);
+	
+	BMP *red = bmp_create(splited, bmp->width, bmp->height, 8);
+	bmp_write(red, "reddd.bmp");
+	
+	bmp_delete(bmp);
+	bmp_delete(red);
 }

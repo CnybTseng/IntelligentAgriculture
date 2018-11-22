@@ -29,7 +29,8 @@ void print_yolo_layer_info(void *_layer, int id);
 void set_yolo_layer_input(void *_layer, float *input);
 float *get_yolo_layer_output(void *_layer);
 void forward_yolo_layer(void *_layer, convnet *net);
-void get_yolo_layer_detections(yolo_layer *layer, convnet *net, int imgw, int imgh, float thresh);
+void get_yolo_layer_detections(yolo_layer *layer, convnet *net, int imgw, int imgh, float thresh, list *l);
+void free_yolo_layer_detections(list *l);
 void backward_yolo_layer(yolo_layer *layer, convnet *net);
 
 #ifdef __cplusplus

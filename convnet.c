@@ -148,14 +148,22 @@ void convnet_architecture(convnet *net)
 	}
 }
 
-detection *get_detections(convnet *net, float thresh, int width, int height, int *ndets)
+list *get_detections(convnet *net, float thresh, int width, int height)
 {
+	list *l = make_list();
+	if (!l) return l;
+	
 	for (int i = 0; i < net->nlayers; ++i) {
 		if (!net->is_output_layer[i]) continue;
-		get_yolo_layer_detections((yolo_layer *)net->layers[i], net, width, height, thresh);
+		get_yolo_layer_detections((yolo_layer *)net->layers[i], net, width, height, thresh, l);
 	}
 	
-	return NULL;
+	return l;
+}
+
+void free_detections(list *detections)
+{
+	free_yolo_layer_detections(detections);
 }
 
 int convnet_parse_input_size(convnet *net)

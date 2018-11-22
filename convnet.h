@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "list.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -88,15 +89,17 @@ void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int 
 void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *output_size);
 /** @ }*/
 
-/** @name 卷积网络的创建, 训练, 推断, 销毁等操作.
+/** @name 卷积网络的创建,训练,推断,销毁等操作.
  ** @ { */
 convnet *convnet_create(void *layers[], int nlayers);
 void convnet_train(convnet *net, datastore *ds, train_options *opts);
 float *convnet_inference(convnet *net, image *input);
 void convnet_destroy(convnet *net);
 void convnet_architecture(convnet *net);
-detection *get_detections(convnet *net, float thresh, int width, int height, int *ndets);
 /** @ } */
+
+list *get_detections(convnet *net, float thresh, int width, int height);
+void free_detections(list *detections);
 
 #ifdef __cplusplus
 }
