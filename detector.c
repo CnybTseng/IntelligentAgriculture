@@ -19,7 +19,7 @@ typedef struct {
 	image *standard;
 } test_image;
 
-extern void split_channel_sse2(const unsigned char *const src, unsigned char *dst, int w, int h);
+extern void split_channel_sse2(unsigned char *src, unsigned char *dst, int w, int h);
 test_image load_test_image(int argc, char *argv[], int width, int height);
 void draw_detections(BMP *bmp, list *detections, char *names[], float thresh);
 void test_multi_free(int argc, char *argv[]);
@@ -41,7 +41,7 @@ void test_split_sse(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_split_sse(argc, argv);
+	test_convnet(argc, argv);
 	
 	return 0;
 }
@@ -887,7 +887,7 @@ void test_split_sse(int argc, char *argv[])
 	char *splited = calloc(bmp->width * bmp->height * 3, 1);
 	split_channel_sse2(bmp->data, (unsigned char *)splited, bmp->width, bmp->height);
 	
-	BMP *red = bmp_create(splited, bmp->width, bmp->height, 8);
+	BMP *red = bmp_create(splited + 0 * bmp->width * bmp->height, bmp->width, bmp->height, 8);
 	bmp_write(red, "reddd.bmp");
 	
 	bmp_delete(bmp);

@@ -36,17 +36,18 @@ void free_image(image *img)
 	img = NULL;
 }
 
-void split_channel_sse2(const unsigned char *const src, unsigned char *dst, int w, int h)
+void split_channel_sse2(unsigned char *src, unsigned char *dst, int w, int h)
 {
-	int ppl = 48;
-	unsigned char *pr = dst;
-	unsigned char *pg = dst + w * h;
-	unsigned char *pb = dst + 2 * w * h;
+	int pixels_per_time = 16;
+	unsigned char *psrc = src;
+	unsigned char *pred = dst;
+	unsigned char *pgrn = dst + w * h;
+	unsigned char *pblu = dst + 2 * w * h;
 	for (int y = 0; y < h; ++y) {
-		for (int x = 0; x < w; x += ppl) {
-			__m128i RGB1 = _mm_loadu_si128((__m128i *)src + y * w);
-			__m128i RGB2 = _mm_loadu_si128((__m128i *)src + y * w + 16);
-			__m128i RGB3 = _mm_loadu_si128((__m128i *)src + y * w + 32);
+		for (int x = 0; x < w; x += pixels_per_time) {
+			__m128i RGB1 = _mm_loadu_si128((__m128i *)(psrc));
+			__m128i RGB2 = _mm_loadu_si128((__m128i *)(psrc + 16));
+			__m128i RGB3 = _mm_loadu_si128((__m128i *)(psrc + 32));
 			
 			__m128i R = _mm_shuffle_epi8(RGB1, _mm_setr_epi8(
 				0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1));
@@ -69,9 +70,14 @@ void split_channel_sse2(const unsigned char *const src, unsigned char *dst, int 
 			B = _mm_or_si128(B, _mm_shuffle_epi8(RGB3, _mm_setr_epi8(
 				-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15)));
 			
-			_mm_storeu_si128((__m128i *)pr, R);
-			_mm_storeu_si128((__m128i *)pg, G);
-			_mm_storeu_si128((__m128i *)pb, B);
+			_mm_storeu_si128((__m128i *)pred, R);
+			_mm_storeu_si128((__m128i *)pgrn, G);
+			_mm_storeu_si128((__m128i *)pblu, B);
+			
+			psrc += 48;
+			pred += 16;
+			pgrn += 16;
+			pblu += 16;
 		}
 	}
 }
