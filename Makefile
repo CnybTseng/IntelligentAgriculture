@@ -1,5 +1,5 @@
-X86=1
-ARM=0
+X86=0
+ARM=1
 
 RM = rm
 
@@ -46,7 +46,7 @@ endif
 
 CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g
 ifeq ($(X86),1)
-CFLAGS+= -msse2 -msse3 -msse4.1
+CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
 endif
 ifeq ($(ARM),1)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99
@@ -71,10 +71,10 @@ endif
 .PHONY:$(EXEC) all
 all:info $(SLIB) $(ALIB) $(EXEC)
 
-detector.exe:detector.o $(OBJS)
+detector:detector.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-testaic.exe:testaic.o
+testaic:testaic.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
 $(ALIB): $(OBJS)

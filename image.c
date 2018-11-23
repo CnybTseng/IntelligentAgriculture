@@ -1,5 +1,10 @@
+#ifdef __INTEL_SSE__
 #include <emmintrin.h>
 #include <tmmintrin.h>
+#elif __ARM_NEON__
+#include <arm_neon.h>
+#endif
+
 #include "image.h"
 #include "zutils.h"
 
@@ -36,38 +41,40 @@ void free_image(image *img)
 	img = NULL;
 }
 
-void split_channel_sse2(unsigned char *src, unsigned char *dst, int w, int h)
+#ifdef __INTEL_SSE__
+void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h)
 {
-	int pixels_per_time = 16;
-	unsigned char *psrc = src;
-	unsigned char *pred = dst;
-	unsigned char *pgrn = dst + w * h;
-	unsigned char *pblu = dst + 2 * w * h;
+	int pixels_per_load = 16;
+	int excess = w - w % pixels_per_load;
 	for (int y = 0; y < h; ++y) {
-		for (int x = 0; x < w; x += pixels_per_time) {
-			__m128i RGB1 = _mm_loadu_si128((__m128i *)(psrc));
-			__m128i RGB2 = _mm_loadu_si128((__m128i *)(psrc + 16));
-			__m128i RGB3 = _mm_loadu_si128((__m128i *)(psrc + 32));
+		unsigned char *psrc = src + y * src_pitch;
+		unsigned char *pred = dst + y * w;
+		unsigned char *pgrn = dst + w * (h + y);
+		unsigned char *pblu = dst + w * ((h << 1) + y);
+		for (int x = 0; x < excess; x += pixels_per_load) {
+			__m128i BGR1 = _mm_loadu_si128((__m128i *)(psrc));
+			__m128i BGR2 = _mm_loadu_si128((__m128i *)(psrc + 16));
+			__m128i BGR3 = _mm_loadu_si128((__m128i *)(psrc + 32));
 			
-			__m128i R = _mm_shuffle_epi8(RGB1, _mm_setr_epi8(
+			__m128i B = _mm_shuffle_epi8(BGR1, _mm_setr_epi8(
 				0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1));
-			R = _mm_or_si128(R, _mm_shuffle_epi8(RGB2, _mm_setr_epi8(
+			B = _mm_or_si128(B, _mm_shuffle_epi8(BGR2, _mm_setr_epi8(
 				-1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14, -1, -1, -1, -1, -1)));
-			R = _mm_or_si128(R, _mm_shuffle_epi8(RGB3, _mm_setr_epi8(
+			B = _mm_or_si128(B, _mm_shuffle_epi8(BGR3, _mm_setr_epi8(
 				-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 4, 7, 10, 13)));
 			
-			__m128i G = _mm_shuffle_epi8(RGB1, _mm_setr_epi8(
+			__m128i G = _mm_shuffle_epi8(BGR1, _mm_setr_epi8(
 				1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1));
-			G = _mm_or_si128(G, _mm_shuffle_epi8(RGB2, _mm_setr_epi8(
+			G = _mm_or_si128(G, _mm_shuffle_epi8(BGR2, _mm_setr_epi8(
 				-1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1)));
-			G = _mm_or_si128(G, _mm_shuffle_epi8(RGB3, _mm_setr_epi8(
+			G = _mm_or_si128(G, _mm_shuffle_epi8(BGR3, _mm_setr_epi8(
 				-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14)));
 			
-			__m128i B = _mm_shuffle_epi8(RGB1, _mm_setr_epi8(
+			__m128i R = _mm_shuffle_epi8(BGR1, _mm_setr_epi8(
 				2, 5, 8, 11, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1));
-			B = _mm_or_si128(B, _mm_shuffle_epi8(RGB2, _mm_setr_epi8(
+			R = _mm_or_si128(R, _mm_shuffle_epi8(BGR2, _mm_setr_epi8(
 				-1, -1, -1, -1, -1, 1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1)));
-			B = _mm_or_si128(B, _mm_shuffle_epi8(RGB3, _mm_setr_epi8(
+			R = _mm_or_si128(R, _mm_shuffle_epi8(BGR3, _mm_setr_epi8(
 				-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15)));
 			
 			_mm_storeu_si128((__m128i *)pred, R);
@@ -80,16 +87,78 @@ void split_channel_sse2(unsigned char *src, unsigned char *dst, int w, int h)
 			pblu += 16;
 		}
 	}
+	
+	if (excess == w) return;
+	
+	int swap[3] = {2, 1, 0};
+	for (int c = 0; c < 3; ++c) {
+		unsigned char *at = dst + swap[c] * w * h;
+		for (int y = 0; y < h; ++y) {
+			for (int x = excess; x < w; ++x) {
+				at[y * w + x] = src[y * src_pitch + 3 * x + c];
+			}
+		}
+	}
+}
+#endif
+
+#ifdef __ARM_NEON__
+void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h)
+{
+	int pixels_per_load = 16;
+	int excess = w - w % pixels_per_load;
+	for (int y = 0; y < h; ++y) {
+		unsigned char *psrc = src + y * src_pitch;
+		unsigned char *pred = dst + y * w;
+		unsigned char *pgrn = dst + w * (h + y);
+		unsigned char *pblu = dst + w * ((h << 1) + y);
+		for (int x = 0; x < excess; x += pixels_per_load) {
+			uint8x16x3_t BGR16 = vld3q_u8(psrc);
+			vst1q_u8(pred, BGR16.val[2]);
+			vst1q_u8(pgrn, BGR16.val[1]);
+			vst1q_u8(pblu, BGR16.val[0]);
+			psrc += 48;
+			pred += 16;
+			pgrn += 16;
+			pblu += 16;
+		}
+	}
+	
+	if (excess == w) return;
+	
+	int swap[3] = {2, 1, 0};
+	for (int c = 0; c < 3; ++c) {
+		unsigned char *at = dst + swap[c] * w * h;
+		for (int y = 0; y < h; ++y) {
+			for (int x = excess; x < w; ++x) {
+				at[y * w + x] = src[y * src_pitch + 3 * x + c];
+			}
+		}
+	}
+}
+#endif
+
+void split_channel0(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h)
+{
+	int swap[3] = {2, 1, 0};
+	for (int c = 0; c < 3; ++c) {
+		unsigned char *at = dst + swap[c] * w * h;
+		for (int y = 0; y < h; ++y) {
+			for (int x = 0; x < w; ++x) {
+				at[y * w + x] = src[y * src_pitch + 3 * x + c];
+			}
+		}
+	}
 }
 
-void split_channel(const unsigned char *const src, image *dst)
+void split_channel(const unsigned char *const src, int src_pitch, image *dst)
 {
 	int swap[3] = {2, 1, 0};
 	for (int c = 0; c < dst->c; ++c) {
 		float *at = dst->data + swap[c] * dst->w * dst->h;
 		for (int y = 0; y < dst->h; ++y) {
 			for (int x = 0; x < dst->w; ++x) {
-				at[(dst->h - 1 - y) * dst->w + x] = src[dst->c * (y * dst->w + x) + c];
+				at[(dst->h - 1 - y) * dst->w + x] = src[y * src_pitch + dst->c * x + c];
 			}
 		}
 	}
