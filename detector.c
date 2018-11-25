@@ -14,14 +14,18 @@
 #include "image.h"
 #include "list.h"
 #include "coco.names"
+#include "CL/opencl.h"
 
 typedef struct {
 	bitmap *original;
 	image *standard;
 } test_image;
 
-#ifdef __INTEN_SSE__
+#ifdef __INTEL_SSE__
 extern void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
+#endif
+#ifdef __ARM_NEON__
+extern void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
 #endif
 extern void split_channel0(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height);
@@ -43,10 +47,11 @@ void test_standard(int argc, char *argv[]);
 void test_list(int argc, char *argv[]);
 void test_split_sse(int argc, char *argv[]);
 void test_split_compare(int argc, char *argv[]);
+void test_opencl(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_split_sse(argc, argv);
+	test_split_compare(argc, argv);
 	
 	return 0;
 }
@@ -299,7 +304,12 @@ void test_convnet(int argc, char *argv[])
 	delete_bmp(red_bmp);
 	free(red);
 	
+	struct timeval t1, t2; 
+    gettimeofday(&t1, NULL);
 	convnet_inference(net, standard);
+	gettimeofday(&t2, NULL);
+	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000);
+	
 	float thresh = 0.5f;
 	if (argc > 2) thresh = atof(argv[2]);
 	
@@ -907,7 +917,7 @@ void test_list(int argc, char *argv[])
 
 void test_split_sse(int argc, char *argv[])
 {
-#ifdef __INTEN_SSE__
+#ifdef __INTEL_SSE__
 	bitmap *bmp = read_bmp(argv[1]);
 	if (!bmp) {
 		fprintf(stderr, "read_bmp[%s:%d].\n", __FILE__, __LINE__);
@@ -963,8 +973,11 @@ void test_split_compare(int argc, char *argv[])
 	
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-#ifdef __INTEN_SSE__
+#ifdef __INTEL_SSE__
 		split_channel_sse(data, (unsigned char *)splited, pitch, width, height);
+#endif
+#ifdef __ARM_NEON__
+		split_channel_neon(data, (unsigned char *)splited, pitch, width, height);
 #endif
 	}
 	gettimeofday(&t2, NULL);
@@ -976,4 +989,15 @@ void test_split_compare(int argc, char *argv[])
 	free(splited);
 	delete_bmp(bmp);
 	delete_bmp(red);
+}
+
+void test_opencl(int argc, char *argv[])
+{
+	cl_platform_id platform;
+	cl_device_id device;
+	cl_uint ndevices;
+	
+	clGetPlatformIDs(1, &platform, NULL);
+	clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, NULL, &ndevices);
+	printf("number of devices is %u.\n", ndevices);
 }

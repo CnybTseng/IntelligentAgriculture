@@ -1,5 +1,5 @@
-X86=0
-ARM=1
+X86=1
+ARM=0
 
 RM = rm
 
@@ -49,7 +49,7 @@ ifeq ($(X86),1)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
 endif
 ifeq ($(ARM),1)
-CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99
+CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=17
 endif
 
 LIB=
@@ -60,7 +60,7 @@ LIBS+= -lOpenCL
 endif
 ifeq ($(ARM),1)
 LIB+= -L./ -L../thirdparty/opencl-1.1/lib/armeabi-v7a
-LIBS+= -lOpenCL -lm
+LIBS+= -lm
 endif
 
 LDFLAGS=$(LIB) $(LIBS)
@@ -71,10 +71,10 @@ endif
 .PHONY:$(EXEC) all
 all:info $(SLIB) $(ALIB) $(EXEC)
 
-detector:detector.o $(OBJS)
+detector.exe:detector.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-testaic:testaic.o
+testaic.exe:testaic.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
 $(ALIB): $(OBJS)
