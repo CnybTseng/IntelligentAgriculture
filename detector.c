@@ -14,7 +14,6 @@
 #include "image.h"
 #include "list.h"
 #include "coco.names"
-#include "CL/opencl.h"
 
 typedef struct {
 	bitmap *original;
@@ -26,8 +25,10 @@ extern void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pi
 #endif
 #ifdef __ARM_NEON__
 extern void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
+extern void resize_image_neon(uint8_t *src, float *dst, int sw, int sh, int dw, int dh);
 #endif
 extern void split_channel0(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
+extern void resize_image0(unsigned char *src, image *dst, int sw, int sh);
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height);
 void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh);
 void test_multi_free(int argc, char *argv[]);
@@ -47,11 +48,11 @@ void test_standard(int argc, char *argv[]);
 void test_list(int argc, char *argv[]);
 void test_split_sse(int argc, char *argv[]);
 void test_split_compare(int argc, char *argv[]);
-void test_opencl(int argc, char *argv[]);
+void test_split_resize(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_split_compare(argc, argv);
+	test_split_resize(argc, argv);
 	
 	return 0;
 }
@@ -706,7 +707,7 @@ void test_split(int argc, char *argv[])
 
 void test_resize(int argc, char *argv[])
 {
-	bitmap *bmp = read_bmp("eagle.bmp");
+	bitmap *bmp = read_bmp(argv[1]);
 	if (!bmp) {
 		fprintf(stderr, "read_bmp[%s:%d].\n", __FILE__, __LINE__);
 		return;
@@ -758,7 +759,7 @@ void test_resize(int argc, char *argv[])
 	}
 	
 	bitmap *red_bmp = create_bmp(red, rsz_width, rsz_height, 8);
-	save_bmp(red_bmp, "red.bmp");
+	save_bmp(red_bmp, "resized.bmp");
 	
 	free(red);
 	free_image(splited);
@@ -969,7 +970,8 @@ void test_split_compare(int argc, char *argv[])
 		split_channel0(data, (unsigned char *)splited, pitch, width, height);
 	}
 	gettimeofday(&t2, NULL);
-	printf("without simd: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000);
+	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	printf("without simd: %f ms.\n", duration1);
 	
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
@@ -981,7 +983,9 @@ void test_split_compare(int argc, char *argv[])
 #endif
 	}
 	gettimeofday(&t2, NULL);
-	printf("with simd: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000);
+	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	printf("with simd: %f ms.\n", duration2);
+	printf("speed-up:%f\n", duration1 / duration2);
 	
 	bitmap *red = create_bmp(splited + 0 * width * height, width, height, 8);
 	save_bmp(red, "reddd.bmp");
@@ -991,13 +995,68 @@ void test_split_compare(int argc, char *argv[])
 	delete_bmp(red);
 }
 
-void test_opencl(int argc, char *argv[])
+void test_split_resize(int argc, char *argv[])
 {
-	cl_platform_id platform;
-	cl_device_id device;
-	cl_uint ndevices;
+	bitmap *bmp = read_bmp(argv[1]);
+	if (!bmp) {
+		fprintf(stderr, "read_bmp[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
 	
-	clGetPlatformIDs(1, &platform, NULL);
-	clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, NULL, &ndevices);
-	printf("number of devices is %u.\n", ndevices);
+	int width = get_bmp_width(bmp);
+	int height = get_bmp_height(bmp);
+	int pitch = get_bmp_pitch(bmp);
+	int bit_count = get_bmp_bit_count(bmp);
+	unsigned char *data = get_bmp_data(bmp);
+	printf("bitmap: width %u, height %u, bit_count %u, pitch %d.\n", width, height, bit_count, pitch);
+	
+	char *splited = calloc(width * height * 3, 1);
+	split_channel_neon(data, (unsigned char *)splited, pitch, width, height);
+	bitmap *red = create_bmp(splited + 0 * width * height, width, height, 8);
+	save_bmp(red, "reddd.bmp");
+
+	float sx = 416.0f / width;
+	float sy = 416.0f / height;
+	float s = sx < sy ? sx : sy;
+	int rsz_width = (int)(width * s);
+	int rsz_height = (int)(height * s);
+	
+	image *resized = create_image(rsz_width, rsz_height, 1);
+	
+	int N = 10000;
+	if (argc > 2) N = atoi(argv[2]);
+	printf("iterations %d\n", N);
+	
+	struct timeval t1, t2; 
+	gettimeofday(&t1, NULL);
+	for (int i = 0; i < N; ++i) {
+		resize_image0((unsigned char *)splited, resized, width, height);
+	}
+	gettimeofday(&t2, NULL);
+	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	printf("without simd: %f ms.\n", duration1);
+	
+	memset(resized->data, 0, resized->w * resized->h * sizeof(float));
+	
+	gettimeofday(&t1, NULL);
+	for (int i = 0; i < N; ++i) {
+		resize_image_neon((uint8_t *)splited, resized->data, width, height, resized->w, resized->h);
+	}
+	gettimeofday(&t2, NULL);
+	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	printf("with simd: %f ms.\n", duration2);
+	printf("speed-up:%f\n", duration1 / duration2);
+
+	unsigned char *resized_u8 = calloc(resized->w * resized->h, sizeof(unsigned char));
+	for (int i = 0; i < resized->w * resized->h; ++i)
+		resized_u8[i] = (unsigned char)resized->data[i];
+	
+	bitmap *resized_bmp = create_bmp((char *)resized_u8, resized->w, resized->h, 8);
+	save_bmp(resized_bmp, "resized.bmp");
+	
+	free(splited);
+	free_image(resized);
+	delete_bmp(bmp);
+	delete_bmp(red);
+	delete_bmp(resized_bmp);
 }

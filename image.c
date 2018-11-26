@@ -1,3 +1,5 @@
+#include <stdint.h>
+#include <omp.h>
 #ifdef __INTEL_SSE__
 #include <emmintrin.h>
 #include <tmmintrin.h>
@@ -46,6 +48,7 @@ void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pitch, in
 {
 	int pixels_per_load = 16;
 	int excess = w - w % pixels_per_load;
+	#pragma omp parallel for
 	for (int y = 0; y < h; ++y) {
 		unsigned char *psrc = src + y * src_pitch;
 		unsigned char *pred = dst + y * w;
@@ -107,6 +110,7 @@ void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, i
 {
 	int pixels_per_load = 16;
 	int excess = w - w % pixels_per_load;
+	// #pragma omp parallel for
 	for (int y = 0; y < h; ++y) {
 		unsigned char *psrc = src + y * src_pitch;
 		unsigned char *pred = dst + y * w;
@@ -145,7 +149,7 @@ void split_channel0(unsigned char *src, unsigned char *dst, int src_pitch, int w
 		unsigned char *at = dst + swap[c] * w * h;
 		for (int y = 0; y < h; ++y) {
 			for (int x = 0; x < w; ++x) {
-				at[y * w + x] = src[y * src_pitch + 3 * x + c];
+				at[(h - 1 - y) * w + x] = src[y * src_pitch + 3 * x + c];
 			}
 		}
 	}
@@ -159,6 +163,79 @@ void split_channel(const unsigned char *const src, int src_pitch, image *dst)
 		for (int y = 0; y < dst->h; ++y) {
 			for (int x = 0; x < dst->w; ++x) {
 				at[(dst->h - 1 - y) * dst->w + x] = src[y * src_pitch + dst->c * x + c];
+			}
+		}
+	}
+}
+
+static inline float32x4_t interpolate(float32x4_t DX, float32x4_t DY, float32x4_t V1,
+                               float32x4_t V2, float32x4_t V3, float32x4_t V4)
+{
+	float32x4_t I1 = vaddq_f32(vmulq_f32(DX, V2), vmulq_f32(vsubq_f32(vdupq_n_f32(1), DX), V1));
+	float32x4_t I2 = vaddq_f32(vmulq_f32(DX, V4), vmulq_f32(vsubq_f32(vdupq_n_f32(1), DX), V3));
+	return vaddq_f32(vmulq_f32(DY, I2), vmulq_f32(vsubq_f32(vdupq_n_f32(1), DY), I1));
+}
+
+void resize_image_neon(uint8_t *src, float *dst, int sw, int sh, int dw, int dh)
+{
+	float32x4_t scale = vdupq_n_f32((float)sw / dw);
+	float32x4_t xbase = {0, 1, 2, 3};
+	for (int y = 1; y < dh-1; ++y) {
+		for (int x = 0; x < dw; x += 4) {
+			float32x4_t X4 = vaddq_f32(vdupq_n_f32((float32_t)x), xbase);
+			X4 = vmulq_f32(X4, scale);
+			int32x4_t X4_U32 = vcvtq_s32_f32(X4);
+			X4 = vsubq_f32(X4, vcvtq_f32_s32(X4_U32));
+			
+			float32x4_t Y4 = vdupq_n_f32((float32_t)y);
+			Y4 = vmulq_f32(Y4, scale);
+			int32x4_t Y4_U32 = vcvtq_s32_f32(Y4);
+			Y4 = vsubq_f32(Y4, vcvtq_f32_s32(Y4_U32));
+			
+			float32x4_t V1 = {src[Y4_U32[0] * sw + X4_U32[0]],
+			                  src[Y4_U32[1] * sw + X4_U32[1]],
+			                  src[Y4_U32[2] * sw + X4_U32[2]],
+			                  src[Y4_U32[3] * sw + X4_U32[3]]};
+
+			float32x4_t V2 = {src[Y4_U32[0] * sw + X4_U32[0] + 1],
+			                  src[Y4_U32[1] * sw + X4_U32[1] + 1],
+							  src[Y4_U32[2] * sw + X4_U32[2] + 1],
+			                  src[Y4_U32[3] * sw + X4_U32[3] + 1]};
+
+			float32x4_t V3 = {src[(Y4_U32[0] + 1) * sw + X4_U32[0]],
+			                  src[(Y4_U32[1] + 1) * sw + X4_U32[1]],
+							  src[(Y4_U32[2] + 1) * sw + X4_U32[2]],
+			                  src[(Y4_U32[3] + 1) * sw + X4_U32[3]]};
+
+			float32x4_t V4 = {src[(Y4_U32[0] + 1) * sw + X4_U32[0] + 1],
+			                  src[(Y4_U32[1] + 1) * sw + X4_U32[1] + 1],
+							  src[(Y4_U32[2] + 1) * sw + X4_U32[2] + 1],
+							  src[(Y4_U32[3] + 1) * sw + X4_U32[3] + 1]};
+
+			float32x4_t J4 = interpolate(X4, Y4, V1, V2, V3, V4);
+			
+			vst1q_f32(dst + y * dw + x, J4);
+		}
+	}
+}
+
+void resize_image0(unsigned char *src, image *dst, int sw, int sh)
+{
+	float s = (float)sw / dst->w;
+	for (int c = 0; c < dst->c; ++c) {
+		unsigned char *src_at = src + c * sw * sh;
+		float *dst_at = dst->data + c * dst->w * dst->h;
+		for (int y = 0; y < dst->h; ++y) {
+			for (int x = 0; x < dst->w; ++x) {
+				float sx = s * x;
+				float sy = s * y;
+				int left = (int)sx;
+				int top = (int)sy;
+				float i1 = (sx - left) * src_at[top * sw + left + 1] +
+				       (left + 1 - sx) * src_at[top * sw + left];
+				float i2 = (sx - left) * src_at[(top + 1) * sw + left + 1] +
+					   (left + 1 - sx) * src_at[(top + 1) * sw + left];
+				dst_at[y * dst->w + x] = (sy - top) * i2 + (top + 1 - sy) * i1;
 			}
 		}
 	}

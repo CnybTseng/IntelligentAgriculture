@@ -1,7 +1,8 @@
-X86=1
-ARM=0
+X86=0
+ARM=1
 
-RM = rm
+RM=rm
+EXE_SUFFIX=
 
 CS=$(wildcard *.c)
 CNDS=$(notdir $(CS))
@@ -19,7 +20,8 @@ SLIB=libaicore.so
 ALIB=libaicore.a
 _EXEC=detector testaic
 ifeq ($(X86),1)
-EXEC=$(addsuffix .exe,$(_EXEC))
+EXE_SUFFIX=.exe
+EXEC=$(addsuffix $(EXE_SUFFIX),$(_EXEC))
 else
 EXEC=$(_EXEC)
 endif
@@ -44,7 +46,7 @@ ifeq ($(ARM),1)
 INC+= -I../thirdparty/opencl-1.1/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp
 ifeq ($(X86),1)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
 endif
@@ -55,8 +57,9 @@ endif
 LIB=
 LIBS=
 ifeq ($(X86),1)
-LIB+= -L./ -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32"
-LIBS+= -lOpenCL
+LIB+= -L./ -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
+-L../thirdparty/pthreads-2.9.1/lib/x86
+LIBS+= -lOpenCL -lpthread
 endif
 ifeq ($(ARM),1)
 LIB+= -L./ -L../thirdparty/opencl-1.1/lib/armeabi-v7a
@@ -71,10 +74,10 @@ endif
 .PHONY:$(EXEC) all
 all:info $(SLIB) $(ALIB) $(EXEC)
 
-detector.exe:detector.o $(OBJS)
+detector$(EXE_SUFFIX):detector.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-testaic.exe:testaic.o
+testaic$(EXE_SUFFIX):testaic.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
 $(ALIB): $(OBJS)
