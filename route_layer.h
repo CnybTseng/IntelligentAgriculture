@@ -10,6 +10,7 @@ extern "C"
 
 typedef struct {
 	LAYER_TYPE type;
+	dim3 output_size;
 	int batch_size;
 	int ninputs;
 	int noutputs;

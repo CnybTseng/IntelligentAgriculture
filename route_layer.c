@@ -4,7 +4,9 @@
 #include "resample_layer.h"
 #include "zutils.h"
 
-void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int nroutes)
+static int parse_input_layer(void *layer, dim3 *output_size);
+
+void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_id, dim3 *output_size)
 {
 	route_layer *layer = calloc(1, sizeof(route_layer));
 	if (!layer) {
@@ -13,6 +15,9 @@ void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int 
 	}
 	
 	layer->type = ROUTE;
+	layer->output_size.w = 0;
+	layer->output_size.h = 0;
+	layer->output_size.c = 0;
 	layer->batch_size = batch_size;
 	layer->ninputs = 0;
 	layer->noutputs = 0;
@@ -34,9 +39,13 @@ void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int 
 	}
 	
 	for (int i = 0; i < nroutes; ++i) {
-		layer->ninputs += input_sizes[i];
-		layer->input_layers[i] = input_layers[i];
-		layer->input_sizes[i] = input_sizes[i];
+		layer->input_layers[i] = layer_id[i];
+		layer->input_sizes[i] = parse_input_layer(layers[i], &layer->output_size);
+		layer->ninputs += layer->input_sizes[i];
+	}
+	
+	if (output_size) {
+		*output_size = layer->output_size;
 	}
 
 	layer->noutputs = layer->ninputs;
@@ -86,7 +95,7 @@ void print_route_layer_info(void *_layer, int id)
 
 void set_route_layer_input(void *_layer, float *input)
 {
-
+	;
 }
 
 float *get_route_layer_output(void *_layer)
@@ -126,4 +135,25 @@ void forward_route_layer(void *_layer, convnet *net)
 void backward_route_layer(route_layer *layer, convnet *net)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+}
+
+int parse_input_layer(void *layer, dim3 *output_size)
+{
+	LAYER_TYPE type = *(LAYER_TYPE *)layer;
+	if (type == CONVOLUTIONAL) {
+		convolutional_layer *l = (convolutional_layer *)layer;
+		output_size->w  = l->output_size.w;
+		output_size->h  = l->output_size.h;
+		output_size->c += l->output_size.c;
+		return l->noutputs;
+	} else if (type == RESAMPLE) {
+		resample_layer *l = (resample_layer *)layer;
+		output_size->w  = l->output_size.w;
+		output_size->h  = l->output_size.h;
+		output_size->c += l->output_size.c;
+		return l->noutputs;
+	} else {
+		fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+		return 0;
+	}
 }

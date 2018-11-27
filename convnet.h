@@ -85,7 +85,7 @@ void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int paddi
                          dim3 *output_size);
 void *make_yolo_layer(dim3 input_size, int batch_size, int nscales, int total_scales, int classes, int *mask,
                       int *anchor_boxes);
-void *make_route_layer(int batch_size, int *input_layers, int *input_sizes, int nroutes);
+void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_id, dim3 *output_size);
 void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *output_size);
 /** @ }*/
 
