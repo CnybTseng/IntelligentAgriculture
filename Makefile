@@ -1,5 +1,5 @@
-X86=0
-ARM=1
+X86=1
+ARM=0
 
 RM=rm
 EXE_SUFFIX=

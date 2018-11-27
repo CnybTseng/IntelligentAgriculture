@@ -1,3 +1,4 @@
+#include <stdarg.h>
 #include "route_layer.h"
 #include "convolutional_layer.h"
 #include "resample_layer.h"

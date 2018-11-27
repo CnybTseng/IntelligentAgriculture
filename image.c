@@ -110,7 +110,7 @@ void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, i
 {
 	int pixels_per_load = 16;
 	int excess = w - w % pixels_per_load;
-	// #pragma omp parallel for
+	#pragma omp parallel for
 	for (int y = 0; y < h; ++y) {
 		unsigned char *psrc = src + y * src_pitch;
 		unsigned char *pred = dst + y * w;
@@ -142,7 +142,7 @@ void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, i
 }
 #endif
 
-void split_channel0(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h)
+void split_channel(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h)
 {
 	int swap[3] = {2, 1, 0};
 	for (int c = 0; c < 3; ++c) {
@@ -155,124 +155,191 @@ void split_channel0(unsigned char *src, unsigned char *dst, int src_pitch, int w
 	}
 }
 
-void split_channel(const unsigned char *const src, int src_pitch, image *dst)
+#ifdef __ARM_NEON__
+static inline uint8x8_t interpolate(uint16x8_t Dx, uint16x8_t Dy, uint8x8_t V1,
+                                    uint8x8_t V2, uint8x8_t V3, uint8x8_t V4)
 {
-	int swap[3] = {2, 1, 0};
-	for (int c = 0; c < dst->c; ++c) {
-		float *at = dst->data + swap[c] * dst->w * dst->h;
-		for (int y = 0; y < dst->h; ++y) {
-			for (int x = 0; x < dst->w; ++x) {
-				at[(dst->h - 1 - y) * dst->w + x] = src[y * src_pitch + dst->c * x + c];
+	uint16x4_t Dx_u16_l4 = vget_low_u16(Dx);
+	uint16x4_t Dx_u16_h4 = vget_high_u16(Dx);
+	uint32x4_t Dx_u32_l4 = vmovl_u16(Dx_u16_l4);
+	uint32x4_t Dx_u32_h4 = vmovl_u16(Dx_u16_h4);
+		
+	uint16x4_t Dy_u16_l4 = vget_low_u16(Dy);
+	uint16x4_t Dy_u16_h4 = vget_high_u16(Dy);
+	uint32x4_t Dy_u32_l4 = vmovl_u16(Dy_u16_l4);
+	uint32x4_t Dy_u32_h4 = vmovl_u16(Dy_u16_h4);
+	
+	uint32x4_t _Dx_u32_l4 = vsubq_u32(vdupq_n_u32(4096), Dx_u32_l4);
+	uint32x4_t _Dx_u32_h4 = vsubq_u32(vdupq_n_u32(4096), Dx_u32_h4);
+	uint32x4_t _Dy_u32_l4 = vsubq_u32(vdupq_n_u32(4096), Dy_u32_l4);
+	uint32x4_t _Dy_u32_h4 = vsubq_u32(vdupq_n_u32(4096), Dy_u32_h4);
+	
+	uint16x8_t V1_u16 = vmovl_u8(V1);
+	uint16x8_t V2_u16 = vmovl_u8(V2);
+	uint16x8_t V3_u16 = vmovl_u8(V3);
+	uint16x8_t V4_u16 = vmovl_u8(V4);
+	
+	uint16x4_t V1_u16_l4 = vget_low_u16(V1_u16);
+	uint16x4_t V1_u16_h4 = vget_high_u16(V1_u16);
+	uint32x4_t V1_u32_l4 = vmovl_u16(V1_u16_l4);
+	uint32x4_t V1_u32_h4 = vmovl_u16(V1_u16_h4);
+	
+	uint16x4_t V2_u16_l4 = vget_low_u16(V2_u16);
+	uint16x4_t V2_u16_h4 = vget_high_u16(V2_u16);
+	uint32x4_t V2_u32_l4 = vmovl_u16(V2_u16_l4);
+	uint32x4_t V2_u32_h4 = vmovl_u16(V2_u16_h4);
+	
+	uint16x4_t V3_u16_l4 = vget_low_u16(V3_u16);
+	uint16x4_t V3_u16_h4 = vget_high_u16(V3_u16);
+	uint32x4_t V3_u32_l4 = vmovl_u16(V3_u16_l4);
+	uint32x4_t V3_u32_h4 = vmovl_u16(V3_u16_h4);
+	
+	uint16x4_t V4_u16_l4 = vget_low_u16(V4_u16);
+	uint16x4_t V4_u16_h4 = vget_high_u16(V4_u16);
+	uint32x4_t V4_u32_l4 = vmovl_u16(V4_u16_l4);
+	uint32x4_t V4_u32_h4 = vmovl_u16(V4_u16_h4);
+	
+	uint32x4_t I1_u32_l4 = vaddq_u32(vmulq_u32(Dx_u32_l4, V2_u32_l4), vmulq_u32(_Dx_u32_l4, V1_u32_l4));
+	uint32x4_t I1_u32_h4 = vaddq_u32(vmulq_u32(Dx_u32_h4, V2_u32_h4), vmulq_u32(_Dx_u32_h4, V1_u32_h4));
+	
+	uint32x4_t I2_u32_l4 = vaddq_u32(vmulq_u32(Dx_u32_l4, V4_u32_l4), vmulq_u32(_Dx_u32_l4, V3_u32_l4));
+	uint32x4_t I2_u32_h4 = vaddq_u32(vmulq_u32(Dx_u32_h4, V4_u32_h4), vmulq_u32(_Dx_u32_h4, V3_u32_h4));
+	
+	uint32x4_t II_u32_l4 = vaddq_u32(vmulq_u32(Dy_u32_l4, I2_u32_l4), vmulq_u32(_Dy_u32_l4, I1_u32_l4));
+	uint32x4_t II_u32_h4 = vaddq_u32(vmulq_u32(Dy_u32_h4, I2_u32_h4), vmulq_u32(_Dy_u32_h4, I1_u32_h4));
+	
+	uint16x4_t II_u16_l4 = vshrn_n_u32(II_u32_l4, 16);
+	uint16x4_t II_u16_h4 = vshrn_n_u32(II_u32_h4, 16);
+	
+	II_u16_l4 = vrshr_n_u16(II_u16_l4, 8);
+	II_u16_h4 = vrshr_n_u16(II_u16_h4, 8);
+	
+	uint16x8_t II_u16 = vcombine_u16(II_u16_l4, II_u16_h4);
+	
+	return vqmovn_u16(II_u16);
+}
+#endif
+
+#ifdef __ARM_NEON__
+static inline uint8x8_t batch_read_pixel(unsigned char *ptr, int pitch, int16x8_t x, short y)
+{
+	uint8x8_t Pix = {
+		ptr[y * pitch + x[0]],
+		ptr[y * pitch + x[1]],
+		ptr[y * pitch + x[2]],
+		ptr[y * pitch + x[3]],
+		ptr[y * pitch + x[4]],
+		ptr[y * pitch + x[5]],
+		ptr[y * pitch + x[6]],
+		ptr[y * pitch + x[7]]
+	};
+	
+	return Pix;
+}
+
+#endif
+
+#ifdef __ARM_NEON__
+void resize_image_neon(unsigned char *src, unsigned char *dst, int src_w, int src_h,
+                       int dst_w, int dst_h, int nchannels)
+{
+	float s = (float)src_w / dst_w;
+	float32x4_t delta_l4 = {0, 1, 2, 3};
+	float32x4_t delta_h4 = {4, 5, 6, 7};
+	int16x8_t minx = vdupq_n_s16(0);
+	int16x8_t maxx = vdupq_n_s16(src_w - 2);
+	for (int c = 0; c < nchannels; ++c) {
+		unsigned char *src_at = src + c * src_w * src_h;
+		unsigned char *dst_at = dst + c * dst_w * dst_h;
+		#pragma omp parallel for
+		for (int y = 0; y < dst_h; ++y) {
+			float sy = s * (y + 0.5) - 0.5;
+			short top = (short)sy;
+			uint16x8_t Dy = vdupq_n_u16((unsigned short)((sy -top) * 4096));
+			if (top < 0) top = 0;
+			if (top > src_h - 2) top = src_h - 2;
+			for (int x = 0; x < dst_w; x += 8) {
+				float32x4_t X_f32_l4 = vaddq_f32(vdupq_n_f32(x + 0.5), delta_l4);
+				float32x4_t X_f32_h4 = vaddq_f32(vdupq_n_f32(x + 0.5), delta_h4);
+				
+				X_f32_l4 = vsubq_f32(vmulq_n_f32(X_f32_l4, s), vdupq_n_f32(0.5));
+				X_f32_h4 = vsubq_f32(vmulq_n_f32(X_f32_h4, s), vdupq_n_f32(0.5));
+				
+				int32x4_t X_s32_l4 = vcvtq_s32_f32(X_f32_l4);
+				int32x4_t X_s32_h4 = vcvtq_s32_f32(X_f32_h4);
+				
+				int16x4_t X_s16_l4 = vmovn_s32(X_s32_l4);
+				int16x4_t X_s16_h4 = vmovn_s32(X_s32_h4);
+				
+				float32x4_t Dx_f32_l4 = vsubq_f32(X_f32_l4, vcvtq_f32_s32(X_s32_l4));
+				float32x4_t Dx_f32_h4 = vsubq_f32(X_f32_h4, vcvtq_f32_s32(X_s32_h4));
+				
+				Dx_f32_l4 = vmulq_n_f32(Dx_f32_l4, 4096);
+				Dx_f32_h4 = vmulq_n_f32(Dx_f32_h4, 4096);
+				
+				uint32x4_t Dx_u32_l4 = vcvtq_u32_f32(Dx_f32_l4);
+				uint32x4_t Dx_u32_h4 = vcvtq_u32_f32(Dx_f32_h4);
+				
+				uint16x4_t Dx_u16_l4 = vmovn_u32(Dx_u32_l4);
+				uint16x4_t Dx_u16_h4 = vmovn_u32(Dx_u32_h4);
+
+				uint16x8_t Dx = vcombine_u16(Dx_u16_l4, Dx_u16_h4);
+				
+				int16x8_t left = vcombine_s16(X_s16_l4, X_s16_h4);
+				left = vminq_s16(vmaxq_s16(left, minx), maxx);
+				
+				uint8x8_t V1 = batch_read_pixel(src_at, src_w, left, top);
+				uint8x8_t V2 = batch_read_pixel(src_at, src_w, vaddq_s16(left, vdupq_n_s16(1)), top);
+				uint8x8_t V3 = batch_read_pixel(src_at, src_w, left, top + 1);
+				uint8x8_t V4 = batch_read_pixel(src_at, src_w, vaddq_s16(left, vdupq_n_s16(1)), top + 1);
+
+				uint8x8_t J8 = interpolate(Dx, Dy, V1, V2, V3, V4);
+				
+				vst1_u8(dst_at + y * dst_w + x, J8);
 			}
 		}
 	}
 }
+#endif
 
-static inline float32x4_t interpolate(float32x4_t DX, float32x4_t DY, float32x4_t V1,
-                               float32x4_t V2, float32x4_t V3, float32x4_t V4)
+void resize_image(unsigned char *src, unsigned char *dst, int src_w, int src_h,
+                  int dst_w, int dst_h, int nchannels)
 {
-	float32x4_t I1 = vaddq_f32(vmulq_f32(DX, V2), vmulq_f32(vsubq_f32(vdupq_n_f32(1), DX), V1));
-	float32x4_t I2 = vaddq_f32(vmulq_f32(DX, V4), vmulq_f32(vsubq_f32(vdupq_n_f32(1), DX), V3));
-	return vaddq_f32(vmulq_f32(DY, I2), vmulq_f32(vsubq_f32(vdupq_n_f32(1), DY), I1));
-}
-
-void resize_image_neon(uint8_t *src, float *dst, int sw, int sh, int dw, int dh)
-{
-	float32x4_t scale = vdupq_n_f32((float)sw / dw);
-	float32x4_t xbase = {0, 1, 2, 3};
-	for (int y = 1; y < dh-1; ++y) {
-		for (int x = 0; x < dw; x += 4) {
-			float32x4_t X4 = vaddq_f32(vdupq_n_f32((float32_t)x), xbase);
-			X4 = vmulq_f32(X4, scale);
-			int32x4_t X4_U32 = vcvtq_s32_f32(X4);
-			X4 = vsubq_f32(X4, vcvtq_f32_s32(X4_U32));
-			
-			float32x4_t Y4 = vdupq_n_f32((float32_t)y);
-			Y4 = vmulq_f32(Y4, scale);
-			int32x4_t Y4_U32 = vcvtq_s32_f32(Y4);
-			Y4 = vsubq_f32(Y4, vcvtq_f32_s32(Y4_U32));
-			
-			float32x4_t V1 = {src[Y4_U32[0] * sw + X4_U32[0]],
-			                  src[Y4_U32[1] * sw + X4_U32[1]],
-			                  src[Y4_U32[2] * sw + X4_U32[2]],
-			                  src[Y4_U32[3] * sw + X4_U32[3]]};
-
-			float32x4_t V2 = {src[Y4_U32[0] * sw + X4_U32[0] + 1],
-			                  src[Y4_U32[1] * sw + X4_U32[1] + 1],
-							  src[Y4_U32[2] * sw + X4_U32[2] + 1],
-			                  src[Y4_U32[3] * sw + X4_U32[3] + 1]};
-
-			float32x4_t V3 = {src[(Y4_U32[0] + 1) * sw + X4_U32[0]],
-			                  src[(Y4_U32[1] + 1) * sw + X4_U32[1]],
-							  src[(Y4_U32[2] + 1) * sw + X4_U32[2]],
-			                  src[(Y4_U32[3] + 1) * sw + X4_U32[3]]};
-
-			float32x4_t V4 = {src[(Y4_U32[0] + 1) * sw + X4_U32[0] + 1],
-			                  src[(Y4_U32[1] + 1) * sw + X4_U32[1] + 1],
-							  src[(Y4_U32[2] + 1) * sw + X4_U32[2] + 1],
-							  src[(Y4_U32[3] + 1) * sw + X4_U32[3] + 1]};
-
-			float32x4_t J4 = interpolate(X4, Y4, V1, V2, V3, V4);
-			
-			vst1q_f32(dst + y * dw + x, J4);
-		}
-	}
-}
-
-void resize_image0(unsigned char *src, image *dst, int sw, int sh)
-{
-	float s = (float)sw / dst->w;
-	for (int c = 0; c < dst->c; ++c) {
-		unsigned char *src_at = src + c * sw * sh;
-		float *dst_at = dst->data + c * dst->w * dst->h;
-		for (int y = 0; y < dst->h; ++y) {
-			for (int x = 0; x < dst->w; ++x) {
-				float sx = s * x;
-				float sy = s * y;
+	float s = (float)src_w / dst_w;
+	for (int c = 0; c < nchannels; ++c) {
+		unsigned char *src_at = src + c * src_w * src_h;
+		unsigned char *dst_at = dst + c * dst_w * dst_h;
+		#pragma omp parallel for
+		for (int y = 0; y < dst_h; ++y) {
+			float sy = s * (y + 0.5) - 0.5;
+			int top = (int)sy;
+			if (top < 0) top = 0;
+			if (top > src_h - 2) top = src_h - 2;
+			short dy = (short)((sy -top) * 4096);
+			for (int x = 0; x < dst_w; ++x) {
+				float sx = s * (x + 0.5) - 0.5;
 				int left = (int)sx;
-				int top = (int)sy;
-				float i1 = (sx - left) * src_at[top * sw + left + 1] +
-				       (left + 1 - sx) * src_at[top * sw + left];
-				float i2 = (sx - left) * src_at[(top + 1) * sw + left + 1] +
-					   (left + 1 - sx) * src_at[(top + 1) * sw + left];
-				dst_at[y * dst->w + x] = (sy - top) * i2 + (top + 1 - sy) * i1;
+				if (left < 0) left = 0;
+				if (left > src_w - 2) left = src_w - 2;
+				short dx = (short)((sx - left) * 4096);
+				int v1 = dx * src_at[top * src_w + left + 1] + (4096 - dx) * src_at[top * src_w + left];
+				int v2 = dx * src_at[(top + 1) * src_w + left + 1] + (4096 - dx) * src_at[(top + 1) * src_w + left];
+				dst_at[y * dst_w + x] = (dy * v2 + (4096 - dy) * v1) >> 24;
 			}
 		}
 	}
 }
 
-void resize_image(image *src, image *dst)
+void embed_image(unsigned char *src, image *dst, int src_w, int src_h)
 {
-	float s = (float)src->w / dst->w;
+	int dx = (dst->w - src_w) / 2;
+	int dy = (dst->h - src_h) / 2;
 	for (int c = 0; c < dst->c; ++c) {
-		float *src_at = src->data + c * src->w * src->h;
+		unsigned char *src_at = src + c * src_w * src_h;
 		float *dst_at = dst->data + c * dst->w * dst->h;
-		for (int y = 0; y < dst->h; ++y) {
-			for (int x = 0; x < dst->w; ++x) {
-				float sx = s * x;
-				float sy = s * y;
-				int left = (int)sx;
-				int top = (int)sy;
-				float i1 = (sx - left) * src_at[top * src->w + left + 1] +
-				       (left + 1 - sx) * src_at[top * src->w + left];
-				float i2 = (sx - left) * src_at[(top + 1) * src->w + left + 1] +
-					   (left + 1 - sx) * src_at[(top + 1) * src->w + left];
-				dst_at[y * dst->w + x] = (sy - top) * i2 + (top + 1 - sy) * i1;
-			}
-		}
-	}
-}
-
-void embed_image(image *src, image *dst)
-{
-	int dx = (dst->w - src->w) / 2;
-	int dy = (dst->h - src->h) / 2;
-	for (int c = 0; c < src->c; ++c) {
-		float *src_at = src->data + c * src->w * src->h;
-		float *dst_at = dst->data + c * dst->w * dst->h;
-		for (int y = 0; y < src->h; ++y) {
-			for (int x = 0; x < src->w; ++x) {
-				dst_at[(y + dy) * dst->w + x + dx] = src_at[y * src->w + x] / 255;
+		for (int y = 0; y < src_h; ++y) {
+			for (int x = 0; x < src_w; ++x) {
+				dst_at[(y + dy) * dst->w + x + dx] = src_at[y * src_w + x] / 255.0f;
 			}
 		}
 	}

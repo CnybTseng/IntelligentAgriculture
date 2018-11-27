@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <sys/time.h>
 #include "convnet.h"
@@ -25,10 +26,9 @@ extern void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pi
 #endif
 #ifdef __ARM_NEON__
 extern void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
-extern void resize_image_neon(uint8_t *src, float *dst, int sw, int sh, int dw, int dh);
+extern void resize_image_neon(unsigned char *src, unsigned char *dst, int src_w, int src_h,
+                              int dst_w, int dst_h, int nchannels);
 #endif
-extern void split_channel0(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
-extern void resize_image0(unsigned char *src, image *dst, int sw, int sh);
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height);
 void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh);
 void test_multi_free(int argc, char *argv[]);
@@ -48,11 +48,11 @@ void test_standard(int argc, char *argv[]);
 void test_list(int argc, char *argv[]);
 void test_split_sse(int argc, char *argv[]);
 void test_split_compare(int argc, char *argv[]);
-void test_split_resize(int argc, char *argv[]);
+void test_resize_compare(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_split_resize(argc, argv);
+	test_convnet(argc, argv);
 	
 	return 0;
 }
@@ -73,9 +73,9 @@ test_image load_test_image(int argc, char *argv[], int std_width, int std_height
 	printf("bitmap: width %u, height %u, bit_count %u.\n", width, height, bit_count);
 	int nchannels = bit_count >> 3;
 	
-	image *splited = create_image(width, height, nchannels);
+	unsigned char *splited = calloc(width * height * nchannels, sizeof(unsigned char));
 	if (!splited) {
-		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		delete_bmp(bmp);
 		return ti;
 	}
@@ -89,32 +89,32 @@ test_image load_test_image(int argc, char *argv[], int std_width, int std_height
 		rsz_height = std_height;
 	}
 	
-	image *rsz_splited = create_image(rsz_width, rsz_height, nchannels);
+	unsigned char *rsz_splited = calloc(rsz_width * rsz_height * nchannels, sizeof(unsigned char));
 	if (!rsz_splited) {
-		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		delete_bmp(bmp);
-		free_image(splited);
+		free(splited);
 		return ti;
 	}
 	
 	int pitch = get_bmp_pitch(bmp);
-	split_channel(data, pitch, splited);
-	resize_image(splited, rsz_splited);
+	split_channel(data, splited, pitch, width, height);
+	resize_image(splited, rsz_splited, width, height, rsz_width, rsz_height, nchannels);
 	
 	image *standard = create_image(std_width, std_height, nchannels);
 	if (!standard) {
 		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
 		delete_bmp(bmp);
-		free_image(splited);
-		free_image(rsz_splited);
+		free(splited);
+		free(rsz_splited);
 		return ti;
 	}
 	
 	set_image(standard, 0.5);
-	embed_image(rsz_splited, standard);
+	embed_image(rsz_splited, standard, rsz_width, rsz_height);
 	
-	free_image(splited);
-	free_image(rsz_splited);
+	free(splited);
+	free(rsz_splited);
 	
 	ti.original = bmp;
 	ti.standard = standard;
@@ -659,15 +659,15 @@ void test_split(int argc, char *argv[])
 	unsigned char *data = get_bmp_data(bmp);
 	printf("bitmap: width %u, height %u, bit_count %u.\n", width, height, bit_count);
 	int nchannels = bit_count >> 3;
-	image *splited = create_image(width, height, nchannels);
+	unsigned char *splited = calloc(width * height * nchannels, sizeof(unsigned char));
 	if (!splited) {
-		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		delete_bmp(bmp);
 		return;
 	}
 	
 	int pitch = get_bmp_pitch(bmp);
-	split_channel(data, pitch, splited);
+	split_channel(data, splited, pitch, width, height);
 	
 	FILE *fp = fopen("split_channel.txt", "w");
 	for (int i = 0; i < width * nchannels; ++i) {
@@ -677,7 +677,7 @@ void test_split(int argc, char *argv[])
 	fputs("\n\n", fp);
 	for (int c = 0; c < nchannels; ++c) {
 		for (int i = 0; i < width; ++i) {
-			fprintf(fp, "%.0f ", splited->data[i + c * width * height]);
+			fprintf(fp, "%u ", splited[i + c * width * height]);
 		}
 		fputs("\n", fp);
 	}
@@ -686,20 +686,20 @@ void test_split(int argc, char *argv[])
 	if (!red) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		fclose(fp);
-		free_image(splited);
+		free(splited);
 		delete_bmp(bmp);
 		return;
 	}
 	
 	for (int i = 0; i < width * height; ++i) {
-		red[i] = (char)splited->data[i];
+		red[i] = splited[i];
 	}
 	
 	bitmap *red_bmp = create_bmp(red, width, height, 8);
-	save_bmp(red_bmp, "red.bmp");
+	save_bmp(red_bmp, "splited.bmp");
 	
 	fclose(fp);
-	free_image(splited);
+	free(splited);
 	free(red);
 	delete_bmp(bmp);
 	delete_bmp(red_bmp);
@@ -720,9 +720,9 @@ void test_resize(int argc, char *argv[])
 	printf("bitmap: width %u, height %u, bit_count %u.\n", width, height, bit_count);
 	int nchannels = bit_count >> 3;
 	
-	image *splited = create_image(width, height, nchannels);
+	unsigned char *splited = calloc(width * height * nchannels, sizeof(unsigned char));
 	if (!splited) {
-		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		delete_bmp(bmp);
 		return;
 	}
@@ -733,44 +733,44 @@ void test_resize(int argc, char *argv[])
 	int rsz_width = (int)(width * s);
 	int rsz_height = (int)(height * s);
 	
-	image *rsz_splited = create_image(rsz_width, rsz_height, nchannels);
+	unsigned char *rsz_splited = calloc(rsz_width * rsz_height * nchannels, sizeof(unsigned char));
 	if (!rsz_splited) {
-		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
-		free_image(splited);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		free(splited);
 		delete_bmp(bmp);
 		return;
 	}
 	
-	int pitch = get_bmp_pitch(bmp);
-	split_channel(data, pitch, splited);
-	resize_image(splited, rsz_splited);
+	int pitch = get_bmp_pitch(bmp);	
+	split_channel(data, splited, pitch, width, height);
+	resize_image(splited, rsz_splited, width, height, rsz_width, rsz_height, nchannels);
 	
 	char *red = calloc(rsz_width * rsz_height, sizeof(char));
 	if (!red) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
-		free_image(splited);
-		free_image(rsz_splited);
+		free(splited);
+		free(rsz_splited);
 		delete_bmp(bmp);
 		return;
 	}
 	
 	for (int i = 0; i < rsz_width * rsz_height; ++i) {
-		red[i] = (char)rsz_splited->data[i];
+		red[i] = rsz_splited[i];
 	}
 	
 	bitmap *red_bmp = create_bmp(red, rsz_width, rsz_height, 8);
 	save_bmp(red_bmp, "resized.bmp");
 	
 	free(red);
-	free_image(splited);
-	free_image(rsz_splited);
+	free(splited);
+	free(rsz_splited);
 	delete_bmp(bmp);
 	delete_bmp(red_bmp);
 }
 
 void test_embed(int argc, char *argv[])
 {
-	bitmap *bmp = read_bmp("horses.bmp");
+	bitmap *bmp = read_bmp(argv[1]);
 	if (!bmp) {
 		fprintf(stderr, "read_bmp[%s:%d].\n", __FILE__, __LINE__);
 		return;
@@ -783,9 +783,9 @@ void test_embed(int argc, char *argv[])
 	printf("bitmap: width %u, height %u, bit_count %u.\n", width, height, bit_count);
 	int nchannels = bit_count >> 3;
 	
-	image *splited = create_image(width, height, nchannels);
+	unsigned char *splited = calloc(width * height * nchannels, sizeof(unsigned char));
 	if (!splited) {
-		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		delete_bmp(bmp);
 		return;
 	}
@@ -796,34 +796,34 @@ void test_embed(int argc, char *argv[])
 	int rsz_width = (int)(width * s);
 	int rsz_height = (int)(height * s);
 	
-	image *rsz_splited = create_image(rsz_width, rsz_height, nchannels);
+	unsigned char *rsz_splited = calloc(rsz_width * rsz_height * nchannels, sizeof(unsigned char));
 	if (!rsz_splited) {
-		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
-		free_image(splited);
+		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		free(splited);
 		delete_bmp(bmp);
 		return;
 	}
 	
 	int pitch = get_bmp_pitch(bmp);
-	split_channel(data, pitch, splited);
-	resize_image(splited, rsz_splited);
+	split_channel(data, splited, pitch, width, height);
+	resize_image(splited, rsz_splited, width, height, rsz_width, rsz_height, nchannels);
 	
 	image *standard = create_image(416, 416, nchannels);
 	if (!standard) {
 		fprintf(stderr, "create_image[%s:%d].\n", __FILE__, __LINE__);
-		free_image(splited);
-		free_image(rsz_splited);
+		free(splited);
+		free(rsz_splited);
 		delete_bmp(bmp);
 		return;
 	}
 	
-	embed_image(rsz_splited, standard);
+	embed_image(rsz_splited, standard, rsz_width, rsz_height);
 	
 	char *red = calloc(standard->w * standard->h, sizeof(char));
 	if (!red) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
-		free_image(splited);
-		free_image(rsz_splited);
+		free(splited);
+		free(rsz_splited);
 		free_image(standard);
 		delete_bmp(bmp);
 		return;
@@ -834,11 +834,11 @@ void test_embed(int argc, char *argv[])
 	}
 	
 	bitmap *red_bmp = create_bmp(red, standard->w, standard->h, 8);
-	save_bmp(red_bmp, "red.bmp");
+	save_bmp(red_bmp, "standard.bmp");
 	
 	free(red);
-	free_image(splited);
-	free_image(rsz_splited);
+	free(splited);
+	free(rsz_splited);
 	free_image(standard);
 	delete_bmp(bmp);
 	delete_bmp(red_bmp);
@@ -936,7 +936,7 @@ void test_split_sse(int argc, char *argv[])
 	split_channel_sse(data, (unsigned char *)splited, pitch, width, height);
 
 	bitmap *red = create_bmp(splited + 0 * width * height, width, height, 8);
-	save_bmp(red, "reddd.bmp");
+	save_bmp(red, "splited.bmp");
 	
 	free(splited);
 	delete_bmp(bmp);
@@ -958,7 +958,7 @@ void test_split_compare(int argc, char *argv[])
 	int bit_count = get_bmp_bit_count(bmp);
 	unsigned char *data = get_bmp_data(bmp);
 	printf("bitmap: width %u, height %u, bit_count %u, pitch %d.\n", width, height, bit_count, pitch);
-	char *splited = calloc(width * height * 3, 1);
+	unsigned char *splited = calloc(width * height * 3, 1);
 	
 	int N = 10000;
 	if (argc > 2) N = atoi(argv[2]);
@@ -967,7 +967,7 @@ void test_split_compare(int argc, char *argv[])
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-		split_channel0(data, (unsigned char *)splited, pitch, width, height);
+		split_channel(data, splited, pitch, width, height);
 	}
 	gettimeofday(&t2, NULL);
 	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
@@ -976,10 +976,10 @@ void test_split_compare(int argc, char *argv[])
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
 #ifdef __INTEL_SSE__
-		split_channel_sse(data, (unsigned char *)splited, pitch, width, height);
+		split_channel_sse(data, splited, pitch, width, height);
 #endif
 #ifdef __ARM_NEON__
-		split_channel_neon(data, (unsigned char *)splited, pitch, width, height);
+		split_channel_neon(data, splited, pitch, width, height);
 #endif
 	}
 	gettimeofday(&t2, NULL);
@@ -987,15 +987,15 @@ void test_split_compare(int argc, char *argv[])
 	printf("with simd: %f ms.\n", duration2);
 	printf("speed-up:%f\n", duration1 / duration2);
 	
-	bitmap *red = create_bmp(splited + 0 * width * height, width, height, 8);
-	save_bmp(red, "reddd.bmp");
+	bitmap *red = create_bmp((char *)splited, width, height, 8);
+	save_bmp(red, "splited.bmp");
 	
 	free(splited);
 	delete_bmp(bmp);
 	delete_bmp(red);
 }
 
-void test_split_resize(int argc, char *argv[])
+void test_resize_compare(int argc, char *argv[])
 {
 	bitmap *bmp = read_bmp(argv[1]);
 	if (!bmp) {
@@ -1003,17 +1003,18 @@ void test_split_resize(int argc, char *argv[])
 		return;
 	}
 	
+	unsigned char *data = get_bmp_data(bmp);
 	int width = get_bmp_width(bmp);
 	int height = get_bmp_height(bmp);
 	int pitch = get_bmp_pitch(bmp);
 	int bit_count = get_bmp_bit_count(bmp);
-	unsigned char *data = get_bmp_data(bmp);
 	printf("bitmap: width %u, height %u, bit_count %u, pitch %d.\n", width, height, bit_count, pitch);
+	int nchannels = bit_count >> 3;
 	
-	char *splited = calloc(width * height * 3, 1);
-	split_channel_neon(data, (unsigned char *)splited, pitch, width, height);
-	bitmap *red = create_bmp(splited + 0 * width * height, width, height, 8);
-	save_bmp(red, "reddd.bmp");
+	unsigned char *splited = calloc(width * height * 3, sizeof(unsigned char));
+	split_channel(data, splited, pitch, width, height);
+	bitmap *red = create_bmp((char *)splited, width, height, 8);
+	save_bmp(red, "splited.bmp");
 
 	float sx = 416.0f / width;
 	float sy = 416.0f / height;
@@ -1021,7 +1022,7 @@ void test_split_resize(int argc, char *argv[])
 	int rsz_width = (int)(width * s);
 	int rsz_height = (int)(height * s);
 	
-	image *resized = create_image(rsz_width, rsz_height, 1);
+	unsigned char *resized = calloc(rsz_width * rsz_height * nchannels, sizeof(unsigned char));
 	
 	int N = 10000;
 	if (argc > 2) N = atoi(argv[2]);
@@ -1030,32 +1031,30 @@ void test_split_resize(int argc, char *argv[])
 	struct timeval t1, t2; 
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-		resize_image0((unsigned char *)splited, resized, width, height);
+		resize_image(splited, resized, width, height, rsz_width, rsz_height, nchannels);
 	}
 	gettimeofday(&t2, NULL);
 	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
 	printf("without simd: %f ms.\n", duration1);
 	
-	memset(resized->data, 0, resized->w * resized->h * sizeof(float));
+	memset(resized, 0, rsz_width * rsz_height * nchannels * sizeof(unsigned char));
 	
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-		resize_image_neon((uint8_t *)splited, resized->data, width, height, resized->w, resized->h);
+#ifdef __ARM_NEON__
+		resize_image_neon((uint8_t *)splited, resized, width, height, rsz_width, rsz_height, nchannels);
+#endif
 	}
 	gettimeofday(&t2, NULL);
 	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
 	printf("with simd: %f ms.\n", duration2);
 	printf("speed-up:%f\n", duration1 / duration2);
-
-	unsigned char *resized_u8 = calloc(resized->w * resized->h, sizeof(unsigned char));
-	for (int i = 0; i < resized->w * resized->h; ++i)
-		resized_u8[i] = (unsigned char)resized->data[i];
 	
-	bitmap *resized_bmp = create_bmp((char *)resized_u8, resized->w, resized->h, 8);
+	bitmap *resized_bmp = create_bmp((char *)resized, rsz_width, rsz_height, 8);
 	save_bmp(resized_bmp, "resized.bmp");
 	
+	free(resized);
 	free(splited);
-	free_image(resized);
 	delete_bmp(bmp);
 	delete_bmp(red);
 	delete_bmp(resized_bmp);
