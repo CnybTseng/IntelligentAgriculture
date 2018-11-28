@@ -80,7 +80,6 @@ convnet *convnet_create(void *layers[], int nlayers)
 
 void convnet_train(convnet *net, datastore *ds, train_options *opts)
 {
-	net->work_mode = TRAIN;
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }
 
