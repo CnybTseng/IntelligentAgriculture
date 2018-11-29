@@ -75,6 +75,11 @@ convnet *convnet_create(void *layers[], int nlayers)
 		return NULL;
 	}
 	
+#ifdef NNPACK
+	net->threadpool = pthreadpool_create(4);
+	nnp_initialize();
+#endif	
+	
 	return net;
 }
 
@@ -134,6 +139,11 @@ void convnet_destroy(convnet *net)
 		free(net->is_output_layer);
 		net->is_output_layer = NULL;
 	}
+	
+#ifdef NNPACK
+	pthreadpool_destroy(net->threadpool);
+	nnp_deinitialize();
+#endif	
 
 	free(net);
 	net = NULL;

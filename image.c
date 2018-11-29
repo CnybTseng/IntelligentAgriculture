@@ -1,12 +1,10 @@
-#include <stdint.h>
 #include <omp.h>
 #ifdef __INTEL_SSE__
-#include <emmintrin.h>
-#include <tmmintrin.h>
+	#include <emmintrin.h>
+	#include <tmmintrin.h>
 #elif __ARM_NEON__
-#include <arm_neon.h>
+	#include <arm_neon.h>
 #endif
-
 #include "image.h"
 #include "zutils.h"
 
@@ -237,7 +235,6 @@ static inline uint8x8_t batch_read_pixel(unsigned char *ptr, int pitch, int16x8_
 	
 	return Pix;
 }
-
 #endif
 
 #ifdef __ARM_NEON__
@@ -320,6 +317,10 @@ void make_bilinear_interp_table(int src_w, int src_h, int dst_w, int dst_h, shor
 		uint16x8_t Dy = vdupq_n_u16((unsigned short)((sy -top) * 4096));
 		if (top < 0) top = 0;
 		if (top > src_h - 2) top = src_h - 2;
+		short *px = x_tab + y * dst_w;
+		short *py = y_tab + y * dst_w;
+		unsigned short *pdx = dx_tab + y * dst_w;
+		unsigned short *pdy = dy_tab + y * dst_w;
 		for (int x = 0; x < dst_w; x += 8) {
 			float32x4_t X_f32_l4 = vaddq_f32(vdupq_n_f32(x + 0.5), delta_l4);
 			float32x4_t X_f32_h4 = vaddq_f32(vdupq_n_f32(x + 0.5), delta_h4);
@@ -350,15 +351,15 @@ void make_bilinear_interp_table(int src_w, int src_h, int dst_w, int dst_h, shor
 
 			uint16x8_t Dx = vcombine_u16(Dx_u16_l4, Dx_u16_h4);
 			
-			vst1q_s16(x_tab, left);
-			vst1q_s16(y_tab, vdupq_n_s16(top));
-			vst1q_u16(dx_tab, Dx);
-			vst1q_u16(dy_tab, Dy);
+			vst1q_s16(px, left);
+			vst1q_s16(py, vdupq_n_s16(top));
+			vst1q_u16(pdx, Dx);
+			vst1q_u16(pdy, Dy);
 			
-			x_tab += 8;
-			y_tab += 8;
-			dx_tab += 8;
-			dy_tab += 8;
+			px += 8;
+			py += 8;
+			pdx += 8;
+			pdy += 8;
 		}
 	}
 }
@@ -388,17 +389,20 @@ void resize_image_neon_faster(unsigned char *pack, unsigned char *dst, int dst_w
 	for (int c = 0; c < nchannels; ++c) {
 		unsigned char *pack_at = pack + c * dst_w * dst_h * 4;
 		unsigned char *dst_at = dst + c * dst_w * dst_h;
-		unsigned short *pdx = dx_tab;
-		unsigned short *pdy = dy_tab;
-		#pragma omp parallel for
+		#pragma omp parallel for num_threads(4)
 		for (int y = 0; y < dst_h; ++y) {
+			unsigned char *ppk = pack_at + y * dst_w * 4;
+			unsigned char *pdst = dst_at + y * dst_w;
+			unsigned short *pdx = dx_tab + y * dst_w;
+			unsigned short *pdy = dy_tab + y * dst_w;
 			for (int x = 0; x < dst_w; x += 8) {
-				uint8x8x4_t V = vld4_u8(pack_at);
+				uint8x8x4_t V = vld4_u8(ppk);
 				uint16x8_t Dx = vld1q_u16(pdx);
 				uint16x8_t Dy = vld1q_u16(pdy);
 				uint8x8_t IV = interpolate(Dx, Dy, V.val[0], V.val[1], V.val[2], V.val[3]);
-				vst1_u8(dst_at + y * dst_w + x, IV);
-				pack_at += 32;
+				vst1_u8(pdst, IV);
+				ppk += 32;
+				pdst += 8;
 				pdx += 8;
 				pdy += 8;
 			}

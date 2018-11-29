@@ -15,6 +15,12 @@
 #include "image.h"
 #include "list.h"
 #include "coco.names"
+#ifdef __ARM_NEON__
+	#include <arm_neon.h>
+#endif
+#ifdef NNPACK
+#	include "nnpack.h"
+#endif
 
 typedef struct {
 	bitmap *original;
@@ -59,10 +65,12 @@ void test_split_sse(int argc, char *argv[]);
 void test_split_compare(int argc, char *argv[]);
 void test_resize_compare(int argc, char *argv[]);
 void test_resize_faster(int argc, char *argv[]);
+void test_activate_neon(int argc, char *argv[]);
+void test_nnpack(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_resize_faster(argc, argv);
+	test_convnet(argc, argv);
 	
 	return 0;
 }
@@ -1137,16 +1145,17 @@ void test_resize_faster(int argc, char *argv[])
 	unsigned char *pack = calloc(rsz_width * rsz_height * 4 * nchannels, sizeof(unsigned char));
 	
 	make_bilinear_interp_table(width, height, rsz_width, rsz_height, x_tab, y_tab, dx_tab, dy_tab);
-	package_neighbor_pixle(width, height, rsz_width, rsz_height, x_tab, y_tab, splited, pack);
-	
+		
 	int N = 10000;
 	if (argc > 2) N = atoi(argv[2]);
-	printf("iterations %d\n", N);
+	printf("faster resize iterations %d\n", N);
 	
 	struct timeval t1, t2; 
 	gettimeofday(&t1, NULL);
-	for (int i = 0; i < N; ++i)
+	for (int i = 0; i < N; ++i) {
+		package_neighbor_pixle(width, height, rsz_width, rsz_height, x_tab, y_tab, splited, pack);
 		resize_image_neon_faster(pack, rsz_splited, rsz_width, rsz_height, nchannels, dx_tab, dy_tab);
+	}
 	gettimeofday(&t2, NULL);
 	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
 	printf("duration: %f ms.\n", duration);
@@ -1178,3 +1187,114 @@ void test_resize_faster(int argc, char *argv[])
 	delete_bmp(bmp);
 	delete_bmp(red_bmp);
 }
+
+void test_activate_neon(int argc, char *argv[])
+{
+	float X[16];
+	srand(time(NULL));
+	for (int i = 0; i < 16; ++i) {
+		X[i] = 2 * (rand() / (float)RAND_MAX - 0.5) + 0.5;
+		printf("%.5f ", X[i]);
+	}
+	printf("\n");
+	
+	activate(X, 16, LEAKY);
+	for (int i = 0; i < 16; ++i)
+		printf("%.5f ", X[i]);
+	printf("\n");
+}
+
+#ifdef NNPACK
+void test_nnpack(int argc, char *argv[])
+{
+	pthreadpool_t threadpool = pthreadpool_create(1);
+	if (nnp_initialize() != nnp_status_success) {
+		fprintf(stderr, "nnp_initialize fail!\n");
+		pthreadpool_destroy(threadpool);
+		return;
+	}
+	
+	int xreso = 8;
+	int yreso = 8;
+	struct nnp_size input_size = {xreso, yreso};
+	struct nnp_padding input_padding = {1, 1, 1, 1};
+	struct nnp_size kernel_size = {3, 3};
+	struct nnp_size stride = {1, 1};
+
+	srand(time(NULL));
+	
+	float *input = calloc(xreso * yreso * 3, sizeof(float));
+	for (int c = 0; c < 3; ++c) {
+		float *ptr = input + c * xreso * yreso;
+		for (int y = 0; y < yreso; ++y) {
+			for (int x = 0; x < xreso; ++x) {
+				ptr[y * xreso + x] = 2 * (rand() / (float)RAND_MAX - 0.5) + 0.5;
+			}
+		}
+	}
+	
+	int nfilters = 64;
+	float *weights = calloc(3 * 3 * 3 * nfilters, sizeof(float));
+	for (int i = 0; i < 3 * 3 * 3 * nfilters; ++i) {
+		weights[i] = 1;
+	}
+	
+	float *bias = calloc(nfilters, sizeof(float));
+	float *output = calloc(xreso * yreso * nfilters, sizeof(float));
+
+	nnp_convolution_inference(
+		nnp_convolution_algorithm_implicit_gemm,
+		nnp_convolution_transform_strategy_tuple_based,
+		3,
+		nfilters,
+		input_size,
+		input_padding,
+		kernel_size,
+		stride,
+		input,
+		weights,
+		bias,
+		output,
+		NULL,
+		NULL,
+		nnp_activation_identity,
+		NULL,
+		threadpool,
+		NULL
+	);
+
+	FILE *fp = fopen("conv.txt", "w");
+	for (int c = 0; c < 3; ++c) {
+		float *ptr = input + c * xreso * yreso;
+		fprintf(fp, "channel = %d\n", c);
+		for (int y = 0; y < yreso; ++y) {
+			for (int x = 0; x < xreso; ++x) {
+				fprintf(fp, "%.5f ", ptr[y * xreso + x]);
+			}
+			fputs("\n", fp);
+		}
+		fputs("\n\n\n\n", fp);
+	}
+	
+	fputs("===============================================\n", fp);
+	for (int c = 0; c < nfilters; ++c) {
+		float *ptr = output + c * xreso * yreso;
+		fprintf(fp, "channel = %d\n", c);
+		for (int y = 0; y < yreso; ++y) {
+			for (int x = 0; x < xreso; ++x) {
+				fprintf(fp, "%.5f ", ptr[y * xreso + x]);
+			}
+			fputs("\n", fp);
+		}
+		fputs("\n\n\n\n", fp);
+	}
+	
+	fclose(fp);
+	free(input);
+	free(weights);
+	free(bias);
+	free(output);
+	pthreadpool_destroy(threadpool);
+	nnp_deinitialize();
+}
+#endif

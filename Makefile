@@ -43,7 +43,7 @@ INC+= -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include" \
 -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include/CL"
 endif
 ifeq ($(ARM),1)
-INC+= -I../thirdparty/opencl-1.1/include
+INC+= -I../thirdparty/opencl-1.1/include -I../thirdparty/NNPACK/include
 endif
 
 CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp
@@ -51,7 +51,7 @@ ifeq ($(X86),1)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
 endif
 ifeq ($(ARM),1)
-CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=17
+CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=17 -DNNPACK
 endif
 
 LIB=
@@ -62,8 +62,8 @@ LIB+= -L./ -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32"
 LIBS+= -lOpenCL -lpthread
 endif
 ifeq ($(ARM),1)
-LIB+= -L./ -L../thirdparty/opencl-1.1/lib/armeabi-v7a
-LIBS+= -lm
+LIB+= -L./ -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib
+LIBS+= -lm -lpthreadpool -lnnpack -lcpuinfo -lclog -llog
 endif
 
 LDFLAGS=$(LIB) $(LIBS)

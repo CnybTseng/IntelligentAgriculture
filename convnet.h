@@ -3,6 +3,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef NNPACK
+#	include "nnpack.h"
+#endif
 #include "list.h"
 
 #ifdef __cplusplus
@@ -53,6 +56,9 @@ struct convnet {
 	FORWARD *forward;
 	FREE_LAYER *free_layer;
 	int *is_output_layer;
+#ifdef NNPACK
+	pthreadpool_t threadpool;
+#endif
 };
 
 typedef struct {

@@ -5,6 +5,10 @@
 #include "im2col.h"
 #include "gemm.h"
 
+#ifdef NNPACK
+static void forward_convolutional_layer_nnp(void *_layer, convnet *net);
+#endif
+
 void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
                                int stride, int padding, int batch_size, int batch_norm, dim3 *output_size)
 {
@@ -164,6 +168,9 @@ float *get_convolutional_layer_output(void *_layer)
 
 void forward_convolutional_layer(void *_layer, convnet *net)
 {
+#ifdef NNPACK
+	return forward_convolutional_layer_nnp(_layer, net);
+#endif	
 	convolutional_layer *layer = (convolutional_layer *)_layer;
 	float alpha = 0;
 	size_t size = layer->noutputs * layer->batch_size * sizeof(float);
@@ -260,3 +267,47 @@ void mul_bias(float *output, float *scales, int batch_size, int nchannels, int s
 		}
 	}
 }
+
+#ifdef NNPACK
+void forward_convolutional_layer_nnp(void *_layer, convnet *net)
+{	
+	convolutional_layer *layer = (convolutional_layer *)_layer;
+	int n = layer->output_size.w * layer->output_size.h;	
+	struct nnp_size input_size = {layer->input_size.w, layer->input_size.h};
+	struct nnp_padding input_padding = {layer->padding, layer->padding, layer->padding, layer->padding};
+	struct nnp_size kernel_size = {layer->filter_size, layer->filter_size};
+	struct nnp_size stride = {layer->stride, layer->stride};
+	
+	float zeros[2048];
+	for (int i = 0; i < 2048; ++i) zeros[i] = 0;
+	
+	nnp_convolution_inference(
+		nnp_convolution_algorithm_implicit_gemm,
+		nnp_convolution_transform_strategy_tuple_based,
+		layer->input_size.c,
+		layer->nfilters,
+		input_size,
+		input_padding,
+		kernel_size,
+		stride,
+		layer->input,
+		layer->weights,
+		zeros,
+		layer->output,
+		NULL,
+		NULL,
+		nnp_activation_identity,
+		NULL,
+		net->threadpool,
+		NULL
+	);
+	
+	if (layer->batch_norm) {
+		forward_batchnorm_layer(layer, net);
+	} else {
+		add_bias(layer->output, layer->biases, layer->batch_size, layer->nfilters, n);
+	}
+	
+	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
+}
+#endif
