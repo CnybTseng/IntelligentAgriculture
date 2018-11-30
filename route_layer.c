@@ -104,14 +104,15 @@ float *get_route_layer_output(void *_layer)
 	return layer->output;
 }
 
-void forward_route_layer(void *_layer, convnet *net)
+void forward_route_layer(void *_layer, znet *net)
 {
 	route_layer *layer = (route_layer *)_layer;
 	int offset = 0;
+	void **layers = znet_layers(net);
 	for (int r = 0; r < layer->nroutes; ++r) {
-		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[layer->input_layers[r]]);		
+		LAYER_TYPE type = *(LAYER_TYPE *)(layers[layer->input_layers[r]]);		
 		if (type == CONVOLUTIONAL) {
-			convolutional_layer *input_layer = (convolutional_layer *)net->layers[layer->input_layers[r]];
+			convolutional_layer *input_layer = (convolutional_layer *)layers[layer->input_layers[r]];
 			for (int b = 0; b < layer->batch_size; ++b) {
 				float *X = input_layer->output + b * layer->input_sizes[r];
 				float *Y = layer->output + b * layer->noutputs + offset;
@@ -119,7 +120,7 @@ void forward_route_layer(void *_layer, convnet *net)
 			}
 			offset += layer->input_sizes[r];
 		} else if (type == RESAMPLE) {
-			resample_layer *input_layer = (resample_layer *)net->layers[layer->input_layers[r]];
+			resample_layer *input_layer = (resample_layer *)layers[layer->input_layers[r]];
 			for (int b = 0; b < layer->batch_size; ++b) {
 				float *X = input_layer->output + b * layer->input_sizes[r];
 				float *Y = layer->output + b * layer->noutputs + offset;
@@ -132,7 +133,7 @@ void forward_route_layer(void *_layer, convnet *net)
 	}
 }
 
-void backward_route_layer(route_layer *layer, convnet *net)
+void backward_route_layer(route_layer *layer, znet *net)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }

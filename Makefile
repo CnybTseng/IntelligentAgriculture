@@ -12,13 +12,13 @@ CPPS=$(wildcard *.cpp)
 CPPNDS=$(notdir $(CPPS))
 CPPOBJS=$(patsubst %.cpp,%.o,$(CPPNDS))
 
-EXEOBJ=detector.o testaic.o
+EXEOBJ=test_znet.o test_aicore.o
 ALLOBJS=$(COBJS) $(CPPOBJS)
 OBJS=$(filter-out $(EXEOBJ),$(ALLOBJS))
 
 SLIB=libaicore.so
 ALIB=libaicore.a
-_EXEC=detector testaic
+_EXEC=test_znet test_aicore
 ifeq ($(X86),1)
 EXE_SUFFIX=.exe
 EXEC=$(addsuffix $(EXE_SUFFIX),$(_EXEC))
@@ -74,10 +74,10 @@ endif
 .PHONY:$(EXEC) all
 all:info $(SLIB) $(ALIB) $(EXEC)
 
-detector$(EXE_SUFFIX):detector.o $(OBJS)
+test_znet$(EXE_SUFFIX):test_znet.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-testaic$(EXE_SUFFIX):testaic.o
+test_aicore$(EXE_SUFFIX):test_aicore.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
 $(ALIB): $(OBJS)

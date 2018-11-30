@@ -49,7 +49,7 @@ void gemm(int transa, int transb, int m, int n, int k, float alpha,
 #ifdef __ARM_NEON__
 	int batches = 4;
 	int excess = mn - mn % batches;
-	#pragma omp parallel for
+	#pragma omp parallel for num_threads(4)
 	for (int i = 0; i < excess; i += batches) {
 		float32x4_t cs = vld1q_f32(C + i);
 		cs = vmulq_n_f32(cs, beta);
@@ -111,13 +111,13 @@ void gemm_tt(int m, int n, int k, float alpha, float *A, int lda,
 void gemm_nn_sse(int m, int n, int k, float alpha, float *A, int lda,
                  float *B, int ldb, float *C, int ldc)
 {
-	
+	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }
 
 #elif __ARM_NEON__
 void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
                   float *B, int ldb, float *C, int ldc)
 {
-	
+	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }
 #endif		 

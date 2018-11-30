@@ -1,3 +1,12 @@
+#include <omp.h>
+#include <math.h>
+#ifdef __INTEL_SSE__
+#	include <emmintrin.h>
+#	include <tmmintrin.h>
+#elif __ARM_NEON__
+#	include <arm_neon.h>
+#	include "neon_math.h"
+#endif
 #include "convolutional_layer.h"
 #include "batchnorm_layer.h"
 #include "activation.h"
@@ -5,8 +14,16 @@
 #include "im2col.h"
 #include "gemm.h"
 
+static void merge_batchnorm_params(convolutional_layer *layer);
 #ifdef NNPACK
-static void forward_convolutional_layer_nnp(void *_layer, convnet *net);
+static void forward_convolutional_layer_nnp(void *_layer, znet *net);
+#endif
+#ifdef __INTEL_SSE__
+static void add_bias_sse(float *output, float *biases, int batch_size, int nchannels, int size);
+static void mul_bias_sse(float *output, float *scales, int batch_size, int nchannels, int size);
+#elif __ARM_NEON__
+static void add_bias_neon(float *output, float *biases, int batch_size, int nchannels, int size);
+static void mul_bias_neon(float *output, float *scales, int batch_size, int nchannels, int size);
 #endif
 
 void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
@@ -166,7 +183,7 @@ float *get_convolutional_layer_output(void *_layer)
 	return layer->output;
 }
 
-void forward_convolutional_layer(void *_layer, convnet *net)
+void forward_convolutional_layer(void *_layer, znet *net)
 {
 #ifdef NNPACK
 	return forward_convolutional_layer_nnp(_layer, net);
@@ -203,7 +220,7 @@ void forward_convolutional_layer(void *_layer, convnet *net)
 	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
 }
 
-void backward_convolutional_layer(convolutional_layer *layer, convnet *net)
+void backward_convolutional_layer(convolutional_layer *layer, znet *net)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }
@@ -218,6 +235,8 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 	}
 	
 	fread(layer->weights, sizeof(float), layer->nweights, fp);
+	
+	// if (layer->batch_norm) merge_batchnorm_params(layer);
 }
 
 int convolutional_output_width(convolutional_layer *layer)
@@ -239,6 +258,9 @@ int convolutional_output_height(convolutional_layer *layer)
  **/
 void add_bias(float *output, float *biases, int batch_size, int nchannels, int size)
 {
+#ifdef __ARM_NEON__
+	return add_bias_neon(output, biases, batch_size, nchannels, size);
+#endif
 	for (int i = 0; i < batch_size; ++i) {
 		for (int j = 0; j < nchannels; ++j) {
 			float *at = output + (i * nchannels + j) * size;
@@ -258,6 +280,9 @@ void add_bias(float *output, float *biases, int batch_size, int nchannels, int s
  **/
 void mul_bias(float *output, float *scales, int batch_size, int nchannels, int size)
 {
+#ifdef __ARM_NEON__
+	return mul_bias_neon(output, scales, batch_size, nchannels, size);
+#endif
 	for (int i = 0; i < batch_size; ++i) {
 		for (int j = 0; j < nchannels; ++j) {
 			float *at = output + (i * nchannels + j) * size;
@@ -268,8 +293,22 @@ void mul_bias(float *output, float *scales, int batch_size, int nchannels, int s
 	}
 }
 
+void merge_batchnorm_params(convolutional_layer *layer)
+{
+	int num_weis = layer->filter_size * layer->filter_size * layer->input_size.c;
+	for (int i = 0; i < layer->nfilters; ++i) {
+		float alpha = layer->scales[i] / sqrt(layer->rolling_variance[i] + 1e-6);
+		float *at = layer->weights + i * num_weis;
+		for (int j = 0; j < num_weis; ++j) {
+			at[j] *= alpha;
+		}
+		
+		layer->biases[i] = layer->biases[i] - layer->rolling_mean[i] * alpha;
+	}
+}
+
 #ifdef NNPACK
-void forward_convolutional_layer_nnp(void *_layer, convnet *net)
+void forward_convolutional_layer_nnp(void *_layer, znet *net)
 {	
 	convolutional_layer *layer = (convolutional_layer *)_layer;
 	int n = layer->output_size.w * layer->output_size.h;	
@@ -298,7 +337,7 @@ void forward_convolutional_layer_nnp(void *_layer, convnet *net)
 		NULL,
 		nnp_activation_identity,
 		NULL,
-		net->threadpool,
+		znet_threadpool(net),
 		NULL
 	);
 	
@@ -309,5 +348,59 @@ void forward_convolutional_layer_nnp(void *_layer, convnet *net)
 	}
 	
 	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
+}
+#endif
+
+#ifdef __INTEL_SSE__
+void add_bias_sse(float *output, float *biases, int batch_size, int nchannels, int size)
+{
+	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+}
+
+void mul_bias_sse(float *output, float *scales, int batch_size, int nchannels, int size)
+{
+	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+}
+
+#elif __ARM_NEON__
+void add_bias_neon(float *output, float *biases, int batch_size, int nchannels, int size)
+{
+	for (int i = 0; i < batch_size; ++i) {
+		#pragma omp parallel for num_threads(4)
+		for (int j = 0; j < nchannels; ++j) {
+			float *at = output + (i * nchannels + j) * size;
+			int batches = 4;
+			int excess = size - size % batches;
+			float32x4_t bs = vdupq_n_f32(biases[j]);
+			for (int k = 0; k < excess; k += batches) {
+				float32x4_t os = vld1q_f32(at + k);
+				os = vaddq_f32(os, bs);
+				vst1q_f32(at + k, os);
+			}
+			for (int k = excess; k < size; ++k) {
+				at[k] += biases[j];
+			}
+		}
+	}
+}
+
+void mul_bias_neon(float *output, float *scales, int batch_size, int nchannels, int size)
+{
+	for (int i = 0; i < batch_size; ++i) {
+		#pragma omp parallel for num_threads(4)
+		for (int j = 0; j < nchannels; ++j) {
+			float *at = output + (i * nchannels + j) * size;
+			int batches = 4;
+			int excess = size - size % batches;
+			for (int k = 0; k < excess; k += batches) {
+				float32x4_t os = vld1q_f32(at + k);
+				os = vmulq_n_f32(os, scales[j]);
+				vst1q_f32(at + k, os);
+			}
+			for (int k = excess; k < size; ++k) {
+				at[k] *= scales[j];
+			}
+		}
+	}
 }
 #endif

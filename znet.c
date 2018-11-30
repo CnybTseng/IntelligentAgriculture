@@ -1,19 +1,44 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "convnet.h"
+#include "znet.h"
 #include "convolutional_layer.h"
 #include "maxpool_layer.h"
 #include "route_layer.h"
 #include "resample_layer.h"
 #include "yolo_layer.h"
 
-static int convnet_parse_input_size(convnet *net);
-static int convnet_parse_layer(convnet *net);
-static int convnet_parse_weights(convnet *net);
+typedef void (*print_layer_info_t)(void *layer, int id);
+typedef void (*set_layer_input_t)(void *layer, float *input);
+typedef float *(*get_layer_output_t)(void *layer);
+typedef void (*forward_t)(void *layer, znet *net);
+typedef void (*free_layer_t)(void *layer);
 
-convnet *convnet_create(void *layers[], int nlayers)
+struct znet {
+	WORK_MODE work_mode;
+	int nlayers;
+	void **layers;
+	float *input;
+	float *output;
+	int width;
+	int height;
+	print_layer_info_t *print_layer_info;
+	set_layer_input_t *set_layer_input;
+	get_layer_output_t *get_layer_output;
+	forward_t *forward;
+	free_layer_t *free_layer;
+	int *is_output_layer;
+#ifdef NNPACK
+	pthreadpool_t threadpool;
+#endif
+};
+
+static int convnet_parse_input_size(znet *net);
+static int convnet_parse_layer(znet *net);
+static int convnet_parse_weights(znet *net);
+
+znet *znet_create(void *layers[], int nlayers)
 {
-	convnet *net = calloc(1, sizeof(convnet));
+	znet *net = calloc(1, sizeof(znet));
 	if (!net) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		return net;
@@ -31,31 +56,31 @@ convnet *convnet_create(void *layers[], int nlayers)
 	net->free_layer = NULL;
 	net->is_output_layer = NULL;
 	
-	net->print_layer_info = calloc(nlayers, sizeof(PRINT_LAYER_INFO));
+	net->print_layer_info = calloc(nlayers, sizeof(print_layer_info_t));
 	if (!net->print_layer_info) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	net->set_layer_input = calloc(nlayers, sizeof(SET_LAYER_INPUT));
+	net->set_layer_input = calloc(nlayers, sizeof(set_layer_input_t));
 	if (!net->set_layer_input) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	net->get_layer_output = calloc(nlayers, sizeof(GET_LAYER_OUTPUT));
+	net->get_layer_output = calloc(nlayers, sizeof(get_layer_output_t));
 	if (!net->get_layer_output) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	net->forward = calloc(nlayers, sizeof(FORWARD));
+	net->forward = calloc(nlayers, sizeof(forward_t));
 	if (!net->forward) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	net->free_layer = calloc(nlayers, sizeof(FREE_LAYER));
+	net->free_layer = calloc(nlayers, sizeof(free_layer_t));
 	if (!net->free_layer) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
@@ -71,24 +96,24 @@ convnet *convnet_create(void *layers[], int nlayers)
 	if (convnet_parse_layer(net)) goto cleanup;
 	
 	if (convnet_parse_weights(net)) {
-		cleanup:convnet_destroy(net);
+		cleanup:znet_destroy(net);
 		return NULL;
 	}
 	
 #ifdef NNPACK
-	net->threadpool = pthreadpool_create(4);
+	net->threadpool = pthreadpool_create(16);
 	nnp_initialize();
 #endif	
 	
 	return net;
 }
 
-void convnet_train(convnet *net, datastore *ds, train_options *opts)
+void znet_train(znet *net, data_store *ds, train_options *opts)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }
 
-float *convnet_inference(convnet *net, image *input)
+float *znet_inference(znet *net, image *input)
 {
 	net->work_mode = INFERENCE;
 	net->input = input->data;
@@ -102,7 +127,7 @@ float *convnet_inference(convnet *net, image *input)
 	return 0;
 }
 
-void convnet_destroy(convnet *net)
+void znet_destroy(znet *net)
 {
 	if (!net) return;
 	
@@ -149,7 +174,7 @@ void convnet_destroy(convnet *net)
 	net = NULL;
 }
 
-void convnet_architecture(convnet *net)
+void znet_architecture(znet *net)
 {
 	printf("id\tlayer\t\t\t   input\t  size/stride\t     filters\t\t\t  output\n");
 	for (int i = 0; i < net->nlayers; i++) {
@@ -157,7 +182,34 @@ void convnet_architecture(convnet *net)
 	}
 }
 
-list *get_detections(convnet *net, float thresh, int width, int height)
+WORK_MODE znet_workmode(znet *net)
+{
+	return net->work_mode;
+}
+
+void **znet_layers(znet *net)
+{
+	return net->layers;
+}
+
+#ifdef NNPACK
+pthreadpool_t znet_threadpool(znet *net)
+{
+	return net->threadpool;
+}
+#endif
+
+int znet_input_width(znet *net)
+{
+	return net->width;
+}
+
+int znet_input_height(znet *net)
+{
+	return net->height;
+}
+
+list *get_detections(znet *net, float thresh, int width, int height)
 {
 	list *l = make_list();
 	if (!l) return l;
@@ -175,7 +227,7 @@ void free_detections(list *detections)
 	free_yolo_layer_detections(detections);
 }
 
-int convnet_parse_input_size(convnet *net)
+int convnet_parse_input_size(znet *net)
 {
 	LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[0]);
 	if (type != CONVOLUTIONAL) {
@@ -190,7 +242,7 @@ int convnet_parse_input_size(convnet *net)
 	return 0;
 }
 
-int convnet_parse_layer(convnet *net)
+int convnet_parse_layer(znet *net)
 {
 	for (int i = 0; i < net->nlayers; ++i) {
 		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
@@ -234,7 +286,7 @@ int convnet_parse_layer(convnet *net)
 	return 0;
 }
 
-int convnet_parse_weights(convnet *net)
+int convnet_parse_weights(znet *net)
 {
 	FILE *fp = fopen("yolov3-tiny.weights", "rb");
 	if (!fp) {

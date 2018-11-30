@@ -1,7 +1,7 @@
 #ifndef _IMAGE_H_
 #define _IMAGE_H_
 
-#include "convnet.h"
+#include "znet.h"
 
 #ifdef __cplusplus
 extern "C"

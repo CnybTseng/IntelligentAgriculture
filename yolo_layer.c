@@ -1,3 +1,4 @@
+#include <omp.h>
 #include <math.h>
 #include <string.h>
 #include "yolo_layer.h"
@@ -102,15 +103,16 @@ float *get_yolo_layer_output(void *_layer)
 	return layer->output;
 }
 
-void forward_yolo_layer(void *_layer, convnet *net)
+void forward_yolo_layer(void *_layer, znet *net)
 {
 	yolo_layer *layer = (yolo_layer *)_layer;
 	int total = layer->ninputs * layer->batch_size;
 	memcpy(layer->output, layer->input, total * sizeof(float));
 	
 	int volume_per_scale = layer->output_size.w * layer->output_size.h * (4 + 1 + layer->classes);
-	if (net->work_mode == INFERENCE) {
+	if (znet_workmode(net) == INFERENCE) {
 		for (int b = 0; b < layer->batch_size; ++b) {
+			#pragma omp parallel for
 			for (int s = 0; s < layer->nscales; ++s) {
 				float *at = layer->output + b * layer->noutputs + s * volume_per_scale;
 				activate(at, 2 * layer->output_size.w * layer->output_size.h, LOGISTIC);
@@ -123,10 +125,12 @@ void forward_yolo_layer(void *_layer, convnet *net)
 	}
 }
 
-void get_yolo_layer_detections(yolo_layer *layer, convnet *net, int imgw, int imgh, float thresh, list *l)
+void get_yolo_layer_detections(yolo_layer *layer, znet *net, int imgw, int imgh, float thresh, list *l)
 {
 	int size = layer->output_size.w * layer->output_size.h;
 	int volume_per_scale = size * (4 + 1 + layer->classes);
+	int width = znet_input_width(net);
+	int height = znet_input_height(net);
 	for (int s = 0; s < layer->nscales; ++s) {
 		float *box_vol = layer->output + s * volume_per_scale;
 		float *obj_slc = layer->output + s * volume_per_scale + 4 * size;
@@ -136,7 +140,7 @@ void get_yolo_layer_detections(yolo_layer *layer, convnet *net, int imgw, int im
 			detection *det = list_alloc(sizeof(detection));
 			if (!det) continue;
 			det->bbox = get_yolo_box(box_vol, i, layer->output_size.w, layer->output_size.h,
-				net->width, net->height, &layer->anchor_boxes[2 * layer->mask[s]], imgw, imgh);
+				width, height, &layer->anchor_boxes[2 * layer->mask[s]], imgw, imgh);
 			det->classes = layer->classes;
 			det->probabilities = get_yolo_prob(prob_vol, i, layer->output_size.w, layer->output_size.h,
 				layer->classes, obj_slc[i]);
@@ -161,7 +165,7 @@ void free_yolo_layer_detections(list *l)
 	list_clear(l);
 }
 
-void backward_yolo_layer(yolo_layer *layer, convnet *net)
+void backward_yolo_layer(yolo_layer *layer, znet *net)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }

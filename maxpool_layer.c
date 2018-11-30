@@ -1,5 +1,15 @@
+#include <omp.h>
 #include <float.h>
 #include "maxpool_layer.h"
+
+#ifdef NNPACK
+struct maxpool_thread_param {
+	void *layer;
+	znet *net;
+};
+
+static void maxpool_thread(struct maxpool_thread_param *param, size_t batch_size, size_t nchannels);
+#endif
 
 void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int padding, int batch_size,
                          dim3 *output_size)
@@ -80,15 +90,21 @@ float *get_maxpool_layer_output(void *_layer)
 	return layer->output;
 }
 
-void forward_maxpool_layer(void *_layer, convnet *net)
-{
+void forward_maxpool_layer(void *_layer, znet *net)
+{	
 	maxpool_layer *layer = (maxpool_layer *)_layer;
+#ifdef NNPACK
+	struct maxpool_thread_param param = {_layer, net};
+	return pthreadpool_compute_2d(znet_threadpool(net), (pthreadpool_function_2d_t)maxpool_thread,
+		&param, layer->batch_size, layer->output_size.c);
+#endif
 	int offsetx = -layer->padding / 2;
 	int offsety = -layer->padding / 2;
 	int inwh = layer->input_size.w * layer->input_size.h;
 	int outwh = layer->output_size.w * layer->output_size.h;
 	
 	for (int b = 0; b < layer->batch_size; ++b) {
+		#pragma omp parallel for
 		for (int c = 0; c < layer->output_size.c; ++c) {
 			int dslice = (b * layer->output_size.c + c) * outwh;
 			int dslice0 = (b * layer->input_size.c + c) * inwh;
@@ -118,7 +134,7 @@ void forward_maxpool_layer(void *_layer, convnet *net)
 	}
 }
 
-void backward_maxpool_layer(maxpool_layer *layer, convnet *net)
+void backward_maxpool_layer(maxpool_layer *layer, znet *net)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }
@@ -132,3 +148,39 @@ int maxpool_output_height(maxpool_layer *layer)
 {
 	return (layer->input_size.h - layer->filter_size + layer->padding) / layer->stride + 1;
 }
+
+#ifdef NNPACK
+void maxpool_thread(struct maxpool_thread_param *param, size_t batch_size, size_t nchannels)
+{
+	maxpool_layer *layer = (maxpool_layer *)param->layer;
+	int offsetx = -layer->padding / 2;
+	int offsety = -layer->padding / 2;
+	int inwh = layer->input_size.w * layer->input_size.h;
+	int outwh = layer->output_size.w * layer->output_size.h;
+	
+	int dslice = (batch_size * layer->output_size.c + nchannels) * outwh;
+	int dslice0 = (batch_size * layer->input_size.c + nchannels) * inwh;
+	for (int y = 0; y < layer->output_size.h; ++y) {
+		for (int x = 0; x < layer->output_size.w; ++x) {
+			int maxidx = -1;
+			float maxval = -FLT_MAX;
+			for (int dy = 0; dy < layer->filter_size; ++dy) {
+				for (int dx = 0; dx < layer->filter_size; ++dx) {
+					int x0 = x * layer->stride + dx + offsetx;
+					int y0 = y * layer->stride + dy + offsety;
+					int idx0 = dslice0 + y0 * layer->input_size.w + x0;
+					int valid = x0 > -1 && x0 < layer->input_size.w &&
+						y0 > -1 && y0 < layer->input_size.h;
+					float val = valid ? layer->input[idx0] : -FLT_MAX;
+					int bigger = val > maxval;
+					maxidx = bigger ? idx0 : maxidx;
+					maxval = bigger ? val : maxval;
+				}
+			}
+			
+			int idx = dslice + y * layer->output_size.w + x;
+			layer->output[idx] = maxval;
+		}
+	}
+}
+#endif

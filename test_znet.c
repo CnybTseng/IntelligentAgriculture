@@ -3,7 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
-#include "convnet.h"
+#include "znet.h"
 #include "im2col.h"
 #include "zutils.h"
 #include "gemm.h"
@@ -47,7 +47,7 @@ extern void resize_image_hv(unsigned char *src, unsigned char *dst, int src_w, i
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height);
 void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh);
 void test_multi_free(int argc, char *argv[]);
-void test_convnet(int argc, char *argv[]);
+void test_yolov3_tiny(int argc, char *argv[]);
 void test_im2col(int argc, char *argv[]);
 void test_gemm(int argc, char *argv[]);
 void test_activate(int argc, char *argv[]);
@@ -70,7 +70,7 @@ void test_nnpack(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_convnet(argc, argv);
+	test_yolov3_tiny(argc, argv);
 	
 	return 0;
 }
@@ -212,7 +212,7 @@ void test_multi_free(int argc, char *argv[])
 	mmfree(3, buf1, buf2, buf3);
 }
 
-void test_convnet(int argc, char *argv[])
+void test_yolov3_tiny(int argc, char *argv[])
 {	
 	if (argc < 2) {
 		fprintf(stderr, "Usage: detector [bitmap filename] [thresh]\n");
@@ -292,14 +292,14 @@ void test_convnet(int argc, char *argv[])
 	input_size = output_size;
 	layers[23] = make_yolo_layer(input_size, 1, 3, 6, 80, smaller_mask, anchor_boxes);
 	
-	convnet *net = convnet_create(layers, nlayers);
+	znet *net = znet_create(layers, nlayers);
 	if (!net) return;
 	
-	convnet_architecture(net);
+	znet_architecture(net);
 	
 	test_image ti = load_test_image(argc, argv, 416, 416);
 	if (!ti.original || !ti.standard) {
-		convnet_destroy(net);
+		znet_destroy(net);
 		return;
 	}
 		
@@ -314,9 +314,14 @@ void test_convnet(int argc, char *argv[])
 	delete_bmp(red_bmp);
 	free(red);
 	
+	int N = 1;
+	if (argc > 3) N = atoi(argv[3]);
+	printf("inference iterations %d\n", N);
+	
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
-	convnet_inference(net, standard);
+	for (int i = 0; i < N; ++i)
+		znet_inference(net, standard);
 	gettimeofday(&t2, NULL);
 	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000);
 	
@@ -333,7 +338,7 @@ void test_convnet(int argc, char *argv[])
 	free_detections(detections);
 	delete_bmp(original);
 	free_image(standard);
-	convnet_destroy(net);
+	znet_destroy(net);
 }
 
 void test_im2col(int argc, char *argv[])
@@ -502,8 +507,8 @@ void test_convolutional_layer(int argc, char *argv[])
 	void *layers[] = {
 		make_convolutional_layer(LINEAR, input_size, 3, 512, 1, 1, 1, 0, &output_size)};
 	
-	convnet *net = convnet_create(layers, 1);
-	convnet_architecture(net);
+	znet *net = znet_create(layers, 1);
+	znet_architecture(net);
 	
 	convolutional_layer *layer = (convolutional_layer *)layers[0];
 	
@@ -551,7 +556,7 @@ void test_convolutional_layer(int argc, char *argv[])
 	}
 	
 	fclose(fp);
-	convnet_destroy(net);
+	znet_destroy(net);
 	free(input);
 }
 
@@ -567,8 +572,8 @@ void test_maxpool_layer(int argc, char *argv[])
 	dim3 output_size;
 	void *layers[] = {make_maxpool_layer(input_size, 3, 3, 0, 1, &output_size)};
 	
-	convnet *net = convnet_create(layers, 1);
-	convnet_architecture(net);
+	znet *net = znet_create(layers, 1);
+	znet_architecture(net);
 	
 	maxpool_layer *layer = (maxpool_layer *)layers[0];
 	
@@ -609,7 +614,7 @@ void test_maxpool_layer(int argc, char *argv[])
 	}
 	
 	fclose(fp);
-	convnet_destroy(net);
+	znet_destroy(net);
 	free(input);
 }
 

@@ -79,7 +79,7 @@ float *get_resample_layer_output(void *_layer)
 	return layer->output;
 }
 
-void forward_resample_layer(void *_layer, convnet *net)
+void forward_resample_layer(void *_layer, znet *net)
 {
 	resample_layer *layer = (resample_layer *)_layer;
 	float alpha = 0;
@@ -98,7 +98,7 @@ void forward_resample_layer(void *_layer, convnet *net)
 	}
 }
 
-void backward_resample_layer(resample_layer *layer, convnet *net)
+void backward_resample_layer(resample_layer *layer, znet *net)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }

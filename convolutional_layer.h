@@ -1,7 +1,7 @@
 #ifndef _CONVOLUTIONAL_LAYER_H_
 #define _CONVOLUTIONAL_LAYER_H_
 
-#include "convnet.h"
+#include "znet.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -32,17 +32,14 @@ typedef struct {
 	float *input;
 	float *vecmat;
 	float *output;
-	void (*forward)(void *layer, convnet *net);
-	void (*backward)(void *layer, convnet *net);
-	void (*destroy)(void *layer);
 } convolutional_layer;
 
 void free_convolution_layer(void *_layer);
 void print_convolutional_layer_info(void *_layer, int id);
 void set_convolutional_layer_input(void *_layer, float *input);
 float *get_convolutional_layer_output(void *_layer);
-void forward_convolutional_layer(void *_layer, convnet *net);
-void backward_convolutional_layer(convolutional_layer *layer, convnet *net);
+void forward_convolutional_layer(void *_layer, znet *net);
+void backward_convolutional_layer(convolutional_layer *layer, znet *net);
 void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp);
 int convolutional_output_width(convolutional_layer *layer);
 int convolutional_output_height(convolutional_layer *layer);

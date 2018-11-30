@@ -24,15 +24,6 @@ static void leaky_activate_neon(float *X, int n);
 static void logistic_active_neon(float *X, int n);
 #endif
 
-/** @brief 神经元激活函数.目前仅支持线性整流激活,泄漏线性整流激活,线性激活和逻辑斯蒂激活.
- ** @param X 神经元原始输出或激活输出.
- ** @param n 神经元个数.
- ** @param activation 激活方法.
- **        activation=RELU,线性整流激活.
- **        activation=LEAKY,泄漏线性整流激活.
- **        activation=LINEAR,线性激活.
- **        activation=LOGISTIC,逻辑斯蒂激活.
- **/
 void activate(float *X, int n, ACTIVATION activation)
 {
 	if (activation == RELU) {
@@ -108,7 +99,7 @@ void relu_activate_neon(float *X, int n)
 	int batches = 4;
 	int excess = n - n % batches;
 	float32x4_t zeros = vdupq_n_f32(0);
-	#pragma omp parallel for
+	#pragma omp parallel for num_threads(4)
 	for (int i = 0; i < excess; i += batches) {
 		float32x4_t xs = vld1q_f32(X + i);
 		uint32x4_t mask = vcgtq_f32(xs, zeros);
@@ -126,7 +117,7 @@ void leaky_activate_neon(float *X, int n)
 	int batches = 4;
 	int excess = n - n % batches;
 	float32x4_t zeros = vdupq_n_f32(0);
-	#pragma omp parallel for
+	#pragma omp parallel for num_threads(4)
 	for (int i = 0; i < excess; i += batches) {
 		float32x4_t xs = vld1q_f32(X + i);
 		uint32x4_t mask = vcgtq_f32(xs, zeros);
@@ -145,7 +136,7 @@ void logistic_active_neon(float *X, int n)
 	int batches = 4;
 	int excess = n - n % batches;
 	float32x4_t ones = vdupq_n_f32(1);
-	#pragma omp parallel for
+	#pragma omp parallel for num_threads(4)
 	for (int i = 0; i < excess; i += batches) {
 		float32x4_t xs = vld1q_f32(X + i);
 		float32x4_t ys = vaddq_f32(ones, exp_ps(vnegq_f32(xs)));
