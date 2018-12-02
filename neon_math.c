@@ -25,6 +25,7 @@
   (this is the zlib license)
 */
 
+#ifdef __ARM_NEON__
 #include "neon_math.h"
 
 typedef uint32x4_t v4su;  // vector of 4 uint32
@@ -296,5 +297,4 @@ v4sf cos_ps(v4sf x) {
   sincos_ps(x, &ysin, &ycos); 
   return ycos;
 }
-
-
+#endif

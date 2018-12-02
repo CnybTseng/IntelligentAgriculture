@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <math.h>
 #include "znet.h"
 #include "im2col.h"
 #include "zutils.h"
@@ -27,6 +28,11 @@ typedef struct {
 	image *standard;
 } test_image;
 
+int equ(void *v1, void *v2);
+void free_val(void *v);
+float IOU(box *b1, box *b2);
+float penalty(float sigma, float score, float iou);
+list *softer_nms(list *detections);
 #ifdef __INTEL_SSE__
 extern void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
 #endif
@@ -41,6 +47,7 @@ extern void package_neighbor_pixle(int src_w, int src_h, int dst_w, int dst_h, s
                                    short *y_tab, unsigned char *src, unsigned char *pack);	
 extern void resize_image_neon_faster(unsigned char *pack, unsigned char *dst, int dst_w, int dst_h,
                                      int nchannels, unsigned short *dx_tab, unsigned short *dy_tab);								   
+void test_resize_faster(int argc, char *argv[]);
 #endif
 extern void resize_image_hv(unsigned char *src, unsigned char *dst, int src_w, int src_h,
                             int dst_w, int dst_h, int nchannels);
@@ -64,15 +71,89 @@ void test_list(int argc, char *argv[]);
 void test_split_sse(int argc, char *argv[]);
 void test_split_compare(int argc, char *argv[]);
 void test_resize_compare(int argc, char *argv[]);
-void test_resize_faster(int argc, char *argv[]);
 void test_activate_neon(int argc, char *argv[]);
 void test_nnpack(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_yolov3_tiny(argc, argv);
+	test_list(argc, argv);
 	
 	return 0;
+}
+
+int equ(void *v1, void *v2)
+{
+	if (!v1 || !v2) return -1;
+	
+	detection *det1 = (detection *)v1;
+	detection *det2 = (detection *)v2;
+	
+	if (fabs(det1->bbox.x - det2->bbox.x) < 1e-7 &&
+		fabs(det1->bbox.y - det2->bbox.y) < 1e-7 &&
+		fabs(det1->bbox.w - det2->bbox.w) < 1e-7 &&
+		fabs(det1->bbox.h - det2->bbox.h) < 1e-7) {
+		return 0;
+	}
+	
+	return -1;
+}
+
+void free_val(void *v)
+{
+	if (!v) return;
+	
+	detection *det = (detection *)v;
+	if (det->probabilities) {
+		free(det->probabilities);
+		det->probabilities = NULL;
+	}
+	
+	free(det);
+}
+
+float IOU(box *b1, box *b2)
+{
+	return 0.5;
+}
+
+float penalty(float sigma, float score, float iou)
+{
+	return score * exp(-iou * iou / sigma);
+}
+
+list *softer_nms(list *detections)
+{
+	int classes = 80;
+	float sigma = 3;
+	list *result = make_list();
+	while (detections->size) {
+		node *n = detections->head;
+		detection best = {.objectness = 0};
+		best.probabilities = calloc(classes, sizeof(float));
+		while (n) {
+			detection *det = (detection *)n->val;
+			if (det->objectness > best.objectness) {
+				best = *det;
+				for (int i = 0; i < classes; ++i) {
+					best.probabilities[i] = det->probabilities[i];
+				}
+			}
+			n = n->next;
+		}
+		
+		list_add_tail(result, &best);
+		list_del_node(detections, &best, equ, free_val);
+		
+		n = detections->head;
+		while (n) {
+			detection *det = (detection *)n->val;
+			float iou = IOU(&best.bbox, &det->bbox);
+			det->objectness = penalty(sigma, det->objectness, iou);
+			n = n->next;
+		}
+	}
+	
+	return result;
 }
 
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height)
@@ -858,7 +939,9 @@ void test_embed(int argc, char *argv[])
 
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i)
+#ifdef __ARM_NEON__
 		embed_image_neon(rsz_splited, standard, rsz_width, rsz_height);
+#endif
 	gettimeofday(&t2, NULL);
 	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
 	printf("with simd: %f ms.\n", duration2);
@@ -935,7 +1018,7 @@ void test_list(int argc, char *argv[])
 		det->objectness = rand() / (double)RAND_MAX;
 		if (list_add_tail(detections, det)) break;
 	}
-	
+		
 	int count = 0;
 	node *nd = detections->head;
 	while (nd) {
@@ -944,10 +1027,34 @@ void test_list(int argc, char *argv[])
 			det->bbox.h, det->classes);
 		for (int i = 0; i < det->classes; ++i)
 			printf("%.2f:", det->probabilities[i]);
-		printf("   %f\n\n\n", det->objectness);
+		printf("   %f  %p\n\n\n", det->objectness, nd);
 		nd = nd->next;
 	}
 	
+	printf("head=%p, tail=%p\n", detections->head, detections->tail);
+	printf("//////////////////////////////////////////////////\n");
+	detection deleted[3];
+	for (int i = 0; i < 3; ++i) {
+		deleted[i].bbox.x = (i + 3) * bx;
+		deleted[i].bbox.y = (i + 3) * by;
+		deleted[i].bbox.w = (i + 3) * bw;
+		deleted[i].bbox.h = (i + 3) * bh;
+		list_del_node(detections, &deleted[i], equ, free_val);
+	}
+	
+	count = 0;
+	nd = detections->head;
+	while (nd) {
+		detection *det = (detection *)nd->val;
+		printf("%d   %.2f:%.2f:%.2f:%.2f   %d   ", ++count, det->bbox.x, det->bbox.y, det->bbox.w,
+			det->bbox.h, det->classes);
+		for (int i = 0; i < det->classes; ++i)
+			printf("%.2f:", det->probabilities[i]);
+		printf("   %f  %p\n\n\n", det->objectness, nd);
+		nd = nd->next;
+	}
+	
+	printf("head=%p, tail=%p\n", detections->head, detections->tail);
 	nd = detections->head;
 	while (nd) {
 		detection *det = (detection *)nd->val;
@@ -1104,6 +1211,7 @@ void test_resize_compare(int argc, char *argv[])
 	delete_bmp(resized_bmp);
 }
 
+#ifdef __ARM_NEON__
 void test_resize_faster(int argc, char *argv[])
 {
 	bitmap *bmp = read_bmp(argv[1]);
@@ -1192,6 +1300,7 @@ void test_resize_faster(int argc, char *argv[])
 	delete_bmp(bmp);
 	delete_bmp(red_bmp);
 }
+#endif
 
 void test_activate_neon(int argc, char *argv[])
 {

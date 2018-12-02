@@ -51,6 +51,42 @@ int list_add_tail(list *l, void *val)
 	return 0;
 }
 
+node *list_del_node(list *l, void *val, int (*equ)(void *v1, void *v2),
+                    void (*free_val)(void *v))
+{
+	if (!l) {
+		fprintf(stderr, "invalid list[%s:%d].\n", __FILE__, __LINE__);
+		return NULL;
+	}
+	
+	node *n = l->head;
+	if (!equ(val, n->val)) {
+		l->head = n->next;
+		if (n->val) free_val(n->val);
+		free(n);
+		if (!l->head) l->tail = NULL;
+		--l->size;
+		return l->head;
+	}
+	
+	node *prev = n;
+	n = n->next;
+	while (n) {
+		if (!equ(val, n->val)) {
+			prev->next = n->next;
+			if (n->val) free_val(n->val);
+			free(n);
+			if (!prev->next) l->tail = prev;
+			--l->size;
+			return prev->next;
+		}
+		prev = n;
+		n = n->next;
+	}
+	
+	return NULL;
+}
+
 void list_clear(list *l)
 {
 	if (!l) return;

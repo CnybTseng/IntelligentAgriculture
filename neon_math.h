@@ -1,3 +1,4 @@
+#ifdef __ARM_NEON__
 #ifndef _NEON_MATH_H_
 #define _NEON_MATH_H_
 
@@ -19,4 +20,5 @@ v4sf cos_ps(v4sf x);
 }
 #endif
 
+#endif
 #endif
