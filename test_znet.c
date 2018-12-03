@@ -15,6 +15,7 @@
 #include "bitmap.h"
 #include "image.h"
 #include "list.h"
+#include "box.h"
 #include "coco.names"
 #ifdef __ARM_NEON__
 	#include <arm_neon.h>
@@ -28,11 +29,6 @@ typedef struct {
 	image *standard;
 } test_image;
 
-int equ(void *v1, void *v2);
-void free_val(void *v);
-float IOU(box *b1, box *b2);
-float penalty(float sigma, float score, float iou);
-list *softer_nms(list *detections);
 #ifdef __INTEL_SSE__
 extern void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
 #endif
@@ -76,84 +72,9 @@ void test_nnpack(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_list(argc, argv);
+	test_yolov3_tiny(argc, argv);
 	
 	return 0;
-}
-
-int equ(void *v1, void *v2)
-{
-	if (!v1 || !v2) return -1;
-	
-	detection *det1 = (detection *)v1;
-	detection *det2 = (detection *)v2;
-	
-	if (fabs(det1->bbox.x - det2->bbox.x) < 1e-7 &&
-		fabs(det1->bbox.y - det2->bbox.y) < 1e-7 &&
-		fabs(det1->bbox.w - det2->bbox.w) < 1e-7 &&
-		fabs(det1->bbox.h - det2->bbox.h) < 1e-7) {
-		return 0;
-	}
-	
-	return -1;
-}
-
-void free_val(void *v)
-{
-	if (!v) return;
-	
-	detection *det = (detection *)v;
-	if (det->probabilities) {
-		free(det->probabilities);
-		det->probabilities = NULL;
-	}
-	
-	free(det);
-}
-
-float IOU(box *b1, box *b2)
-{
-	return 0.5;
-}
-
-float penalty(float sigma, float score, float iou)
-{
-	return score * exp(-iou * iou / sigma);
-}
-
-list *softer_nms(list *detections)
-{
-	int classes = 80;
-	float sigma = 3;
-	list *result = make_list();
-	while (detections->size) {
-		node *n = detections->head;
-		detection best = {.objectness = 0};
-		best.probabilities = calloc(classes, sizeof(float));
-		while (n) {
-			detection *det = (detection *)n->val;
-			if (det->objectness > best.objectness) {
-				best = *det;
-				for (int i = 0; i < classes; ++i) {
-					best.probabilities[i] = det->probabilities[i];
-				}
-			}
-			n = n->next;
-		}
-		
-		list_add_tail(result, &best);
-		list_del_node(detections, &best, equ, free_val);
-		
-		n = detections->head;
-		while (n) {
-			detection *det = (detection *)n->val;
-			float iou = IOU(&best.bbox, &det->bbox);
-			det->objectness = penalty(sigma, det->objectness, iou);
-			n = n->next;
-		}
-	}
-	
-	return result;
 }
 
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height)
@@ -232,6 +153,12 @@ void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh)
 	node *n = detections->head;
 	while (n) {
 		detection *det = (detection *)n->val;
+		if (det->objectness < thresh) {
+			n = n->next;
+			continue;
+		}
+		
+		printf("objectness:%.5f ", det->objectness);
 		int maybe = 0;
 		for (int i = 0; i < det->classes; ++i) {
 			if (det->probabilities[i] < thresh) continue;
@@ -404,7 +331,7 @@ void test_yolov3_tiny(int argc, char *argv[])
 	for (int i = 0; i < N; ++i)
 		znet_inference(net, standard);
 	gettimeofday(&t2, NULL);
-	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000);
+	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
 	
 	float thresh = 0.5f;
 	if (argc > 2) thresh = atof(argv[2]);
@@ -413,9 +340,12 @@ void test_yolov3_tiny(int argc, char *argv[])
 	int height = get_bmp_height(original);
 	
 	list *detections = get_detections(net, thresh, width, height);	
-	draw_detections(original, detections, names, thresh);
+	list *bests = soft_nms(detections, 2.5);
+	
+	draw_detections(original, bests, names, thresh);
 	save_bmp(original, "detections.bmp");
 	
+	free_detections(bests);
 	free_detections(detections);
 	delete_bmp(original);
 	free_image(standard);
@@ -848,7 +778,7 @@ void test_resize(int argc, char *argv[])
 	for (int i = 0; i < N; ++i)
 		resize_image_hv(splited, rsz_splited, width, height, rsz_width, rsz_height, nchannels);
 	gettimeofday(&t2, NULL);
-	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("duration: %f ms.\n", duration);
 	
 	char *red = calloc(rsz_width * rsz_height, sizeof(char));
@@ -932,7 +862,7 @@ void test_embed(int argc, char *argv[])
 	for (int i = 0; i < N; ++i)
 		embed_image(rsz_splited, standard, rsz_width, rsz_height);
 	gettimeofday(&t2, NULL);
-	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("without simd: %f ms.\n", duration1);
 	
 	memset(standard->data, 0, standard->w * standard->h * nchannels * sizeof(float));
@@ -943,7 +873,7 @@ void test_embed(int argc, char *argv[])
 		embed_image_neon(rsz_splited, standard, rsz_width, rsz_height);
 #endif
 	gettimeofday(&t2, NULL);
-	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("with simd: %f ms.\n", duration2);
 	printf("speed-up:%f\n", duration1 / duration2);
 	
@@ -1004,7 +934,7 @@ void test_list(int argc, char *argv[])
 	
 	srand(time(NULL));
 	for (int i = 0; i < 10; ++i) {
-		detection *det = list_alloc(sizeof(detection));
+		detection *det = list_alloc_mem(sizeof(detection));
 		if (!det) break;
 		det->bbox.x = (i + 1) * bx;
 		det->bbox.y = (i + 1) * by;
@@ -1039,7 +969,7 @@ void test_list(int argc, char *argv[])
 		deleted[i].bbox.y = (i + 3) * by;
 		deleted[i].bbox.w = (i + 3) * bw;
 		deleted[i].bbox.h = (i + 3) * bh;
-		list_del_node(detections, &deleted[i], equ, free_val);
+		list_del_node(detections, &deleted[i], equ_val, free_val);
 	}
 	
 	count = 0;
@@ -1121,7 +1051,7 @@ void test_split_compare(int argc, char *argv[])
 	for (int i = 0; i < N; ++i)
 		split_channel(data, splited, pitch, width, height);
 	gettimeofday(&t2, NULL);
-	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("without simd: %f ms.\n", duration1);
 	
 	gettimeofday(&t1, NULL);
@@ -1134,7 +1064,7 @@ void test_split_compare(int argc, char *argv[])
 #endif
 	}
 	gettimeofday(&t2, NULL);
-	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("with simd: %f ms.\n", duration2);
 	printf("speed-up:%f\n", duration1 / duration2);
 	
@@ -1185,7 +1115,7 @@ void test_resize_compare(int argc, char *argv[])
 		resize_image(splited, resized, width, height, rsz_width, rsz_height, nchannels);
 	}
 	gettimeofday(&t2, NULL);
-	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration1 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("without simd: %f ms.\n", duration1);
 	
 	memset(resized, 0, rsz_width * rsz_height * nchannels * sizeof(unsigned char));
@@ -1197,7 +1127,7 @@ void test_resize_compare(int argc, char *argv[])
 #endif
 	}
 	gettimeofday(&t2, NULL);
-	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration2 = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("with simd: %f ms.\n", duration2);
 	printf("speed-up:%f\n", duration1 / duration2);
 	
@@ -1270,7 +1200,7 @@ void test_resize_faster(int argc, char *argv[])
 		resize_image_neon_faster(pack, rsz_splited, rsz_width, rsz_height, nchannels, dx_tab, dy_tab);
 	}
 	gettimeofday(&t2, NULL);
-	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000;
+	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("duration: %f ms.\n", duration);
 	
 	char *red = calloc(rsz_width * rsz_height, sizeof(char));

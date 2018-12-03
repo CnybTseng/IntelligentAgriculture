@@ -222,9 +222,9 @@ list *get_detections(znet *net, float thresh, int width, int height)
 	return l;
 }
 
-void free_detections(list *detections)
+void free_detections(list *l)
 {
-	free_yolo_layer_detections(detections);
+	free_yolo_layer_detections(l);
 }
 
 int convnet_parse_input_size(znet *net)

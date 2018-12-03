@@ -18,9 +18,14 @@ list *make_list()
 	return l;
 }
 
-void *list_alloc(size_t size)
+void *list_alloc_mem(size_t size)
 {
 	return  calloc(1, size);
+}
+
+void list_free_mem(void *mem)
+{
+	if (mem) free(mem);
 }
 
 int list_add_tail(list *l, void *val)
@@ -51,7 +56,7 @@ int list_add_tail(list *l, void *val)
 	return 0;
 }
 
-node *list_del_node(list *l, void *val, int (*equ)(void *v1, void *v2),
+node *list_del_node(list *l, void *val, int (*equ_val)(void *v1, void *v2),
                     void (*free_val)(void *v))
 {
 	if (!l) {
@@ -60,7 +65,7 @@ node *list_del_node(list *l, void *val, int (*equ)(void *v1, void *v2),
 	}
 	
 	node *n = l->head;
-	if (!equ(val, n->val)) {
+	if (!equ_val(val, n->val)) {
 		l->head = n->next;
 		if (n->val) free_val(n->val);
 		free(n);
@@ -72,7 +77,7 @@ node *list_del_node(list *l, void *val, int (*equ)(void *v1, void *v2),
 	node *prev = n;
 	n = n->next;
 	while (n) {
-		if (!equ(val, n->val)) {
+		if (!equ_val(val, n->val)) {
 			prev->next = n->next;
 			if (n->val) free_val(n->val);
 			free(n);

@@ -137,7 +137,7 @@ void get_yolo_layer_detections(yolo_layer *layer, znet *net, int imgw, int imgh,
 		float *prob_vol = layer->output + s * volume_per_scale + 5 * size;
 		for (int i = 0; i < size; ++i) {
 			if (obj_slc[i] < thresh) continue;
-			detection *det = list_alloc(sizeof(detection));
+			detection *det = list_alloc_mem(sizeof(detection));
 			if (!det) continue;
 			det->bbox = get_yolo_box(box_vol, i, layer->output_size.w, layer->output_size.h,
 				width, height, &layer->anchor_boxes[2 * layer->mask[s]], imgw, imgh);
@@ -156,7 +156,7 @@ void free_yolo_layer_detections(list *l)
 	while (nd) {
 		detection *det = (detection *)nd->val;
 		if (det->probabilities) {
-			free(det->probabilities);
+			list_free_mem(det->probabilities);
 			det->probabilities = NULL;
 		}
 		nd = nd->next;
@@ -199,7 +199,7 @@ box get_yolo_box(float *box_volume, int id, int layer_width, int layer_height,
 float *get_yolo_prob(float *prob_volume, int id, int layer_width, int layer_height,
                      int classes, float objectness)
 {
-	float *probabilities = calloc(classes, sizeof(float));
+	float *probabilities = list_alloc_mem(classes * sizeof(float));
 	if (!probabilities) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		return probabilities;

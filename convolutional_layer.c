@@ -258,7 +258,9 @@ int convolutional_output_height(convolutional_layer *layer)
  **/
 void add_bias(float *output, float *biases, int batch_size, int nchannels, int size)
 {
-#ifdef __ARM_NEON__
+#ifdef __INTEL_SSE__
+	return add_bias_sse(output, biases, batch_size, nchannels, size);
+#elif __ARM_NEON__
 	return add_bias_neon(output, biases, batch_size, nchannels, size);
 #endif
 	for (int i = 0; i < batch_size; ++i) {
@@ -280,7 +282,9 @@ void add_bias(float *output, float *biases, int batch_size, int nchannels, int s
  **/
 void mul_bias(float *output, float *scales, int batch_size, int nchannels, int size)
 {
-#ifdef __ARM_NEON__
+#ifdef __INTEL_SSE__
+	return mul_bias_sse(output, scales, batch_size, nchannels, size);
+#elif __ARM_NEON__
 	return mul_bias_neon(output, scales, batch_size, nchannels, size);
 #endif
 	for (int i = 0; i < batch_size; ++i) {
@@ -354,12 +358,44 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 #ifdef __INTEL_SSE__
 void add_bias_sse(float *output, float *biases, int batch_size, int nchannels, int size)
 {
-	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+	for (int i = 0; i < batch_size; ++i) {
+		#pragma omp parallel for num_threads(8)
+		for (int j = 0; j < nchannels; ++j) {
+			float *at = output + (i * nchannels + j) * size;
+			int batches = 4;
+			int excess = size - size % batches;
+			__m128 bs = _mm_set1_ps(biases[j]);
+			for (int k = 0; k < excess; k += batches) {
+				__m128 os = _mm_loadu_ps(at + k);
+				os = _mm_add_ps(os, bs);
+				_mm_storeu_ps(at + k, os);
+			}
+			for (int k = excess; k < size; ++k) {
+				at[k] += biases[j];
+			}
+		}
+	}
 }
 
 void mul_bias_sse(float *output, float *scales, int batch_size, int nchannels, int size)
 {
-	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+	for (int i = 0; i < batch_size; ++i) {
+		#pragma omp parallel for num_threads(8)
+		for (int j = 0; j < nchannels; ++j) {
+			float *at = output + (i * nchannels + j) * size;
+			int batches = 4;
+			int excess = size - size % batches;
+			__m128 ss = _mm_set1_ps(scales[j]);
+			for (int k = 0; k < excess; k += batches) {
+				__m128 os = _mm_loadu_ps(at + k);
+				os = _mm_mul_ps(os, ss);
+				_mm_storeu_ps(at + k, os);
+			}
+			for (int k = excess; k < size; ++k) {
+				at[k] *= scales[j];
+			}
+		}
+	}
 }
 
 #elif __ARM_NEON__

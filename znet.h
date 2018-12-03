@@ -73,8 +73,8 @@ typedef struct {
 } image;
 
 typedef struct {
-	float x;	// 左上角横坐标
-	float y;	// 左上角纵坐标
+	float x;	// 中心横坐标
+	float y;	// 中心纵坐标
 	float w;	// 框框宽度
 	float h;	// 框框高度
 } box;
@@ -229,10 +229,17 @@ int znet_input_height(znet *net);
  **/
 list *get_detections(znet *net, float thresh, int width, int height);
 
-/** @brief 释放物体检测结果占用的内存.
- ** @param detections 物体检测结果的链表.
+/** @name 轻柔的非最大值抑制. 
+ ** @param l 未经非最大值抑制的物体检测结果的链表.
+ ** @param sigma 非最大值抑制力度.
+ ** @return 经非最大值抑制的物体检测结果的链表.
  **/
-void free_detections(list *detections);
+list *soft_nms(list *l, float sigma);
+
+/** @brief 释放物体检测结果占用的内存.
+ ** @param l 物体检测结果的链表.
+ **/
+void free_detections(list *l);
 /** @ } */
 
 #ifdef __cplusplus

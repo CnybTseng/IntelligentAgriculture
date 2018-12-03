@@ -18,7 +18,9 @@ static void normalize_neon(float *X, float *mean, float *variance, int batch_siz
 
 void normalize(float *X, float *mean, float *variance, int batch_size, int nchannels, int size)
 {
-#ifdef __ARM_NEON__
+#ifdef __INTEL_SSE__
+	return normalize_sse(X, mean, variance, batch_size, nchannels, size);
+#elif __ARM_NEON__
 	return normalize_neon(X, mean, variance, batch_size, nchannels, size);
 #endif
 	for (int i = 0; i < batch_size; ++i) {
@@ -59,7 +61,24 @@ void backward_batchnorm_layer(void *layer, znet *net)
 #ifdef __INTEL_SSE__
 void normalize_sse(float *X, float *mean, float *variance, int batch_size, int nchannels, int size)
 {
-	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+	for (int i = 0; i < batch_size; ++i) {
+		#pragma omp parallel for num_threads(8)
+		for (int j = 0; j < nchannels; ++j) {
+			float *at = X + (i * nchannels + j) * size;
+			int batches = 4;
+			int excess = size - size % batches;
+			__m128 scales = _mm_set_ps1(1 / (sqrt(variance[j]) + 1e-6));
+			__m128 biases = _mm_set_ps1(-mean[j] / (sqrt(variance[j]) + 1e-6));
+			for (int k = 0; k < excess; k += batches) {
+				__m128 xs = _mm_loadu_ps(at + k);
+				xs = _mm_add_ps(_mm_mul_ps(xs, scales), biases);
+				_mm_storeu_ps(at + k, xs);
+			}
+			for (int k = excess; k < size; ++k) {
+				at[k] = (at[k] - mean[j]) / (sqrt(variance[j]) + 1e-6);
+			}
+		}
+	}
 }
 
 #elif __ARM_NEON__
