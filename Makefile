@@ -46,7 +46,7 @@ ifeq ($(ARM),1)
 INC+= -I../thirdparty/opencl-1.1/include -I../thirdparty/NNPACK/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV
 ifeq ($(X86),1)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
 endif

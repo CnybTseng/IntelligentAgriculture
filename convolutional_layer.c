@@ -14,7 +14,9 @@
 #include "im2col.h"
 #include "gemm.h"
 
+#ifdef MERGE_BATCHNORM_TO_CONV
 static void merge_batchnorm_params(convolutional_layer *layer);
+#endif
 #ifdef NNPACK
 static void forward_convolutional_layer_nnp(void *_layer, znet *net);
 #endif
@@ -210,12 +212,16 @@ void forward_convolutional_layer(void *_layer, znet *net)
 		
 		gemm(0, 0, m, n, k, 1, A, k, B, n, 1, C, n);
 	}
-	
+
+#ifndef MERGE_BATCHNORM_TO_CONV	
 	if (layer->batch_norm) {
 		forward_batchnorm_layer(layer, net);
 	} else {
+#endif
 		add_bias(layer->output, layer->biases, layer->batch_size, layer->nfilters, n);
+#ifndef MERGE_BATCHNORM_TO_CONV
 	}
+#endif
 	
 	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
 }
@@ -235,8 +241,9 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 	}
 	
 	fread(layer->weights, sizeof(float), layer->nweights, fp);
-	
-	// if (layer->batch_norm) merge_batchnorm_params(layer);
+#ifdef MERGE_BATCHNORM_TO_CONV
+	if (layer->batch_norm) merge_batchnorm_params(layer);
+#endif
 }
 
 int convolutional_output_width(convolutional_layer *layer)
@@ -297,6 +304,7 @@ void mul_bias(float *output, float *scales, int batch_size, int nchannels, int s
 	}
 }
 
+#ifdef MERGE_BATCHNORM_TO_CONV
 void merge_batchnorm_params(convolutional_layer *layer)
 {
 	int num_weis = layer->filter_size * layer->filter_size * layer->input_size.c;
@@ -310,6 +318,7 @@ void merge_batchnorm_params(convolutional_layer *layer)
 		layer->biases[i] = layer->biases[i] - layer->rolling_mean[i] * alpha;
 	}
 }
+#endif
 
 #ifdef NNPACK
 void forward_convolutional_layer_nnp(void *_layer, znet *net)
@@ -325,7 +334,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 	for (int i = 0; i < 2048; ++i) zeros[i] = 0;
 	
 	nnp_convolution_inference(
-		nnp_convolution_algorithm_implicit_gemm,
+		nnp_convolution_algorithm_auto,
 		nnp_convolution_transform_strategy_tuple_based,
 		layer->input_size.c,
 		layer->nfilters,
@@ -344,12 +353,16 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 		znet_threadpool(net),
 		NULL
 	);
-	
+
+#ifndef MERGE_BATCHNORM_TO_CONV	
 	if (layer->batch_norm) {
 		forward_batchnorm_layer(layer, net);
 	} else {
+#endif
 		add_bias(layer->output, layer->biases, layer->batch_size, layer->nfilters, n);
+#ifndef MERGE_BATCHNORM_TO_CONV
 	}
+#endif
 	
 	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
 }
