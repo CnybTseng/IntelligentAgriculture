@@ -1,5 +1,5 @@
-X86=1
-ARM=0
+X86=0
+ARM=1
 
 RM=rm
 EXE_SUFFIX=
@@ -51,7 +51,7 @@ ifeq ($(X86),1)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
 endif
 ifeq ($(ARM),1)
-CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=17 -DNNPACK
+CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -DNNPACK -pie -fPIE -DOPENCL
 endif
 
 LIB=
@@ -63,7 +63,7 @@ LIBS+= -lOpenCL -lpthread
 endif
 ifeq ($(ARM),1)
 LIB+= -L./ -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib
-LIBS+= -lm -lpthreadpool -lnnpack -lcpuinfo -lclog -llog
+LIBS+= -lm -lpthreadpool -lnnpack -lcpuinfo -lclog -llog -lOpenCL
 endif
 
 LDFLAGS=$(LIB) $(LIBS)

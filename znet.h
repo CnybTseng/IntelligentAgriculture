@@ -6,6 +6,9 @@
 #ifdef NNPACK
 #	include "nnpack.h"
 #endif
+#ifdef OPENCL
+#	include "cl_ez.h"
+#endif
 #include "list.h"
 
 #ifdef __cplusplus
@@ -201,6 +204,14 @@ void **znet_layers(znet *net);
  ** @return 返回卷积神经网络的线程池句柄.
  **/
 pthreadpool_t znet_threadpool(znet *net);
+#endif
+
+#ifdef OPENCL
+/** @brief 获取卷积神经网络的OpenCL平台层.
+ ** @param net 卷积神经网络实例指针.
+ ** @return 返回卷积神经网络的OpenCL平台层.
+ **/
+cl_platform_layer *znet_platform_layer(znet *net);
 #endif
 
 /** @brief 获取卷积神经网络输入层的宽度.
