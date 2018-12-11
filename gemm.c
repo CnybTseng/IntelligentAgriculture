@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <omp.h>
 #ifdef __INTEL_SSE__
 #	include <emmintrin.h>
@@ -86,6 +87,9 @@ void gemm(int transa, int transb, int m, int n, int k, float alpha,
 void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
              float *B, int ldb, float *C, int ldc)
 {
+#ifdef OPENCL
+	return gemm_nn_cl(m, n, k, alpha, A, lda, B, ldb, C, ldc);
+#endif
 	#pragma omp parallel for
 	for (int i = 0; i < m; ++i) {
 		for (int j = 0; j < n; ++j) {
@@ -134,32 +138,60 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float *C, int ldc)
 {
 	cl_platform_layer *platform_layer = cl_create_platform_layer();
-	cl_runtime *runtime = cl_create_runtime(platform_layer->devices[0], platform_layer->context, "gemm_nn_cl.cl");
+	if (!platform_layer) return;
+	
+	cl_runtime *runtime = cl_create_runtime(platform_layer->devices[0], platform_layer->context, "gemm_nn.cl");
+	if (!runtime) return cl_destroy_platform_layer(platform_layer);
+
+	cl_get_platform_layer_info(platform_layer);	
 	
 	cl_int erret;
-	cl_mem d_A = clCreateBuffer(platform_layer->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-		m * k * sizeof(float), A, &erret);
-	cl_mem d_B = clCreateBuffer(platform_layer->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-		k * n * sizeof(float), B, &erret);
-	cl_mem d_C = clCreateBuffer(platform_layer->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-		m * n * sizeof(float), C, &erret);
+	cl_mem d_A = clCreateBuffer(platform_layer->context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
+		m * k * sizeof(float), NULL, &erret);
+
+	cl_mem d_B = clCreateBuffer(platform_layer->context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
+		k * n * sizeof(float), NULL, &erret);
+
+	cl_mem d_C = clCreateBuffer(platform_layer->context, CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
+		m * n * sizeof(float), NULL, &erret);
+
+	
+	float *h_A = clEnqueueMapBuffer(runtime->cmdqueue, d_A, CL_TRUE, CL_MAP_WRITE,
+		0, m * k * sizeof(float), 0, NULL, NULL, &erret);
+	memcpy(h_A, A, m * k * sizeof(float));
+	clEnqueueUnmapMemObject(runtime->cmdqueue, d_A, h_A, 0, NULL, NULL);
+	
+	float *h_B = clEnqueueMapBuffer(runtime->cmdqueue, d_B, CL_TRUE, CL_MAP_WRITE,
+		0, k * n * sizeof(float), 0, NULL, NULL, &erret);
+	memcpy(h_B, B, k * n * sizeof(float));
+	clEnqueueUnmapMemObject(runtime->cmdqueue, d_B, h_B, 0, NULL, NULL);
+	
+	float *h_C = clEnqueueMapBuffer(runtime->cmdqueue, d_C, CL_TRUE, CL_MAP_WRITE,
+		0, m * n * sizeof(float), 0, NULL, NULL, &erret);
+	memcpy(h_C, C, m * n * sizeof(float));
+	clEnqueueUnmapMemObject(runtime->cmdqueue, d_C, h_C, 0, NULL, NULL);
 	
 	erret  = clSetKernelArg(runtime->kernel, 0, sizeof(int), &m);
 	erret |= clSetKernelArg(runtime->kernel, 1, sizeof(int), &n); 
 	erret |= clSetKernelArg(runtime->kernel, 2, sizeof(int), &k); 
 	erret |= clSetKernelArg(runtime->kernel, 3, sizeof(float), &alpha);
-	erret |= clSetKernelArg(runtime->kernel, 4, sizeof(cl_mem), d_A); 
+	erret |= clSetKernelArg(runtime->kernel, 4, sizeof(cl_mem), &d_A); 
 	erret |= clSetKernelArg(runtime->kernel, 5, sizeof(int), &lda); 
-	erret |= clSetKernelArg(runtime->kernel, 6, sizeof(cl_mem), d_B); 
+	erret |= clSetKernelArg(runtime->kernel, 6, sizeof(cl_mem), &d_B); 
 	erret |= clSetKernelArg(runtime->kernel, 7, sizeof(int), &ldb); 
-	erret |= clSetKernelArg(runtime->kernel, 8, sizeof(cl_mem), d_C); 
+	erret |= clSetKernelArg(runtime->kernel, 8, sizeof(cl_mem), &d_C); 
 	erret |= clSetKernelArg(runtime->kernel, 9, sizeof(int), &ldc); 
+	
+	if (CL_SUCCESS != erret) {
+		fprintf(stderr, "clSetKernelArg fail!\n");
+	}
 	
 	cl_event event;
 	cl_uint work_dim = 2;
 	size_t global_work_size[] = {m, n};
+	size_t local_work_size[] = {16, 16};
 	erret = clEnqueueNDRangeKernel(runtime->cmdqueue, runtime->kernel, work_dim, NULL, global_work_size,
-		NULL, 0, NULL, &event);
+		local_work_size, 0, NULL, &event);
 	
 	clFinish(runtime->cmdqueue);
 	
@@ -170,8 +202,11 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 	
 	printf("GPU: %f ms.\n", (end - start) * 1e-6f);
 	
-	erret = clEnqueueReadBuffer(runtime->cmdqueue, d_C, CL_FALSE, 0, m * n * sizeof(float), C, 0, NULL, NULL);
-	
+	h_C = clEnqueueMapBuffer(runtime->cmdqueue, d_C, CL_TRUE, CL_MAP_READ,
+		0, m * n * sizeof(float), 0, NULL, NULL, &erret);
+	memcpy(C, h_C, m * n * sizeof(float));
+	clEnqueueUnmapMemObject(runtime->cmdqueue, d_C, h_C, 0, NULL, NULL);
+
 	clReleaseMemObject(d_A);
 	clReleaseMemObject(d_B);
 	clReleaseMemObject(d_C);

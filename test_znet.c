@@ -72,7 +72,7 @@ void test_nnpack(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_yolov3_tiny(argc, argv);
+	test_gemm(argc, argv);
 	
 	return 0;
 }
@@ -405,10 +405,10 @@ void test_im2col(int argc, char *argv[])
 
 void test_gemm(int argc, char *argv[])
 {
-	int aw = 16;
-	int ah = 8;
-	int bw = 8;
-	int bh = 16;
+	int aw = 416;
+	int ah = 416;
+	int bw = 416;
+	int bh = 416;
 	
 	float *A = (float *)malloc(aw * ah * sizeof(float));
 	if (!A) {
@@ -449,7 +449,7 @@ void test_gemm(int argc, char *argv[])
 		C[i] = 1;
 	}
 	
-	gemm(0, 0, ch, cw, aw, 0.65, A, aw, B, bw, 0.089, C, cw);
+	gemm(0, 0, ch, cw, aw, 1, A, aw, B, bw, 1, C, cw);
 	
 	FILE *fp = fopen("matrix.txt", "w");
 	if (!fp) {
