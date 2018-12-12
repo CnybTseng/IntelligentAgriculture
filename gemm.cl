@@ -1,11 +1,24 @@
 __kernel void
-gemm_nn(int m, int n, int k, float alpha, __global float *A, int lda,
-        __global float *B, int ldb, __global float *C, int ldc)
+gemm_nn_v1(int m, int n, int k, float alpha, __global float *A, int lda,
+           __global float *B, int ldb, __global float *C, int ldc)
+{	
+	int i = get_global_id(0);
+	int j = get_global_id(1);
+	if (j >= 0 && j < n && i >= 0 && i < m) {
+		for (int l = 0; l < k; ++l) {
+			C[i * ldc + j] += alpha * A[i * lda + l] * B[l * ldb + j];
+		}
+	}
+}
+
+__kernel void
+gemm_nn_v2(int m, int n, int k, float alpha, __global float *A, int lda,
+           __global float *B, int ldb, __global float *C, int ldc)
 {
 	const int local_row = get_local_id(0);
 	const int local_col = get_local_id(1);
 
-	enum {tile_size = 32};
+	enum {tile_size = 16};
 	__local float tile_A[tile_size][tile_size];
 	__local float tile_B[tile_size][tile_size];
 

@@ -30,9 +30,6 @@ struct znet {
 #ifdef NNPACK
 	pthreadpool_t threadpool;
 #endif
-#ifdef OPENCL
-	cl_platform_layer *platform_layer;
-#endif
 };
 
 static int convnet_parse_input_size(znet *net);
@@ -107,11 +104,6 @@ znet *znet_create(void *layers[], int nlayers)
 	net->threadpool = pthreadpool_create(8);
 	nnp_initialize();
 #endif	
-
-#ifdef OPENCL
-	net->platform_layer = cl_create_platform_layer();
-	cl_get_platform_layer_info(net->platform_layer);
-#endif
 	
 	return net;
 }
@@ -178,10 +170,6 @@ void znet_destroy(znet *net)
 	nnp_deinitialize();
 #endif	
 
-#ifdef OPENCL
-	cl_destroy_platform_layer(net->platform_layer);
-#endif
-
 	free(net);
 	net = NULL;
 }
@@ -208,13 +196,6 @@ void **znet_layers(znet *net)
 pthreadpool_t znet_threadpool(znet *net)
 {
 	return net->threadpool;
-}
-#endif
-
-#ifdef OPENCL
-cl_platform_layer *znet_platform_layer(znet *net)
-{
-	return net->platform_layer;
 }
 #endif
 

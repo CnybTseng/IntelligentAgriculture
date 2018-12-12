@@ -23,6 +23,8 @@
 #ifdef NNPACK
 #	include "nnpack.h"
 #endif
+#include "winograd_convolution.h"
+#include "cl_wrapper.h"
 
 typedef struct {
 	bitmap *original;
@@ -69,10 +71,12 @@ void test_split_compare(int argc, char *argv[]);
 void test_resize_compare(int argc, char *argv[]);
 void test_activate_neon(int argc, char *argv[]);
 void test_nnpack(int argc, char *argv[]);
+void test_winograd_weight_transformation(int argc, char *argv[]);
+void test_cl_wrapper(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_gemm(argc, argv);
+	test_yolov3_tiny(argc, argv);
 	
 	return 0;
 }
@@ -405,10 +409,10 @@ void test_im2col(int argc, char *argv[])
 
 void test_gemm(int argc, char *argv[])
 {
-	int aw = 416;
-	int ah = 416;
-	int bw = 416;
-	int bh = 416;
+	int aw = 32;
+	int ah = 32;
+	int bw = 32;
+	int bh = 32;
 	
 	float *A = (float *)malloc(aw * ah * sizeof(float));
 	if (!A) {
@@ -1342,3 +1346,23 @@ void test_nnpack(int argc, char *argv[])
 	nnp_deinitialize();
 }
 #endif
+
+void test_winograd_weight_transformation(int argc, char *argv[])
+{
+	float weights[9];
+	srand(time(NULL));
+	for (int i = 0; i < 9; ++i) {
+		weights[i] = rand() / (double)RAND_MAX;
+	}
+	
+	float transformed_weights[64];
+	transform_weight(F6x6_3x3, weights, 3, 1, 1, transformed_weights);
+	
+	save_volume(weights, 3, 3, 1, "weights.txt");
+	save_volume(transformed_weights, 8, 8, 1, "transformed_weights.txt");
+}
+
+void test_cl_wrapper(int argc, char *argv[])
+{
+	
+}

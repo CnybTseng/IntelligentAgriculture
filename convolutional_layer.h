@@ -25,6 +25,7 @@ typedef struct {
 	int vmsize;
 	int noutputs;
 	float *weights;
+	float *transformed_weights;
 	float *scales;
 	float *biases;
 	float *rolling_mean;

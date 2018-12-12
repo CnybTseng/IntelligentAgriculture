@@ -13,6 +13,7 @@
 #include "zutils.h"
 #include "im2col.h"
 #include "gemm.h"
+#include "winograd_convolution.h"
 
 #ifdef MERGE_BATCHNORM_TO_CONV
 static void merge_batchnorm_params(convolutional_layer *layer);
@@ -55,6 +56,7 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->vmsize = input_size.c * filter_size * filter_size * layer->output_size.w * layer->output_size.h;
 	layer->noutputs = layer->output_size.w * layer->output_size.h * nfilters;
 	layer->weights = NULL;
+	layer->transformed_weights = NULL;
 	layer->scales = NULL;
 	layer->biases = NULL;
 	layer->rolling_mean = NULL;
@@ -71,6 +73,15 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	if (!layer->weights) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
+	}
+	
+	if (3 == filter_size) {
+		const int tran_size = get_transformed_weight_matrix_size(F6x6_3x3);
+		layer->transformed_weights = calloc(tran_size * tran_size * input_size.c * nfilters, sizeof(float));
+		if (!layer->transformed_weights) {
+			fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+			goto cleanup;
+		}
 	}
 	
 	layer->scales = calloc(nfilters, sizeof(float));
@@ -120,6 +131,11 @@ void free_convolution_layer(void *_layer)
 	if (layer->weights) {
 		free(layer->weights);
 		layer->weights = NULL;
+	}
+	
+	if (3 == layer->filter_size && layer->transformed_weights) {
+		free(layer->transformed_weights);
+		layer->transformed_weights = NULL;
 	}
 	
 	if (layer->scales) {
@@ -244,6 +260,11 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 #ifdef MERGE_BATCHNORM_TO_CONV
 	if (layer->batch_norm) merge_batchnorm_params(layer);
 #endif
+
+	// if (3 == layer->filter_size) {
+	// 	transform_weight(F6x6_3x3, layer->weights, layer->filter_size, layer->input_size.c,
+	// 		layer->nfilters, layer->transformed_weights);
+	// }
 }
 
 int convolutional_output_width(convolutional_layer *layer)
