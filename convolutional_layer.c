@@ -175,7 +175,11 @@ void free_convolution_layer(void *_layer)
 void print_convolutional_layer_info(void *_layer, int id)
 {
 	convolutional_layer *layer = (convolutional_layer*)_layer;
-	printf("%2d\tconv\t\t%4d x%4d x%4d\t\t%dx%d/%d\t\t%4d\t\t%4d x%4d x%4d\n",
+	static double total_bflop = 0;
+	double bflop = layer->filter_size * layer->filter_size * layer->input_size.c * layer->output_size.w *
+		layer->output_size.h * layer->output_size.c * 2 / 1000000000.0;
+	total_bflop += bflop;
+	printf("%2d\tconv\t\t%4d x%4d x%4d\t\t%dx%d/%d\t\t%4d\t\t%4d x%4d x%4d\t%.9f->%.9f BFLOPs\n",
 		id,
 		layer->input_size.w,
 		layer->input_size.h,
@@ -186,7 +190,9 @@ void print_convolutional_layer_info(void *_layer, int id)
 		layer->nfilters,
 		layer->output_size.w,
 		layer->output_size.h,
-		layer->output_size.c);
+		layer->output_size.c,
+		bflop,
+		total_bflop);
 }
 
 void set_convolutional_layer_input(void *_layer, float *input)

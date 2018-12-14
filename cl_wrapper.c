@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <stdarg.h>
@@ -20,15 +21,20 @@ cl_wrapper cl_create_wrapper(cl_int *errcode)
 	*errcode = clGetDeviceIDs(wrapper.platform, CL_DEVICE_TYPE_GPU, num_entries, &wrapper.device, NULL);
 	if (CL_SUCCESS != *errcode) return wrapper;
 
-	wrapper.context = clCreateContext(NULL, num_entries, &wrapper.device, NULL, NULL, errcode);
+	cl_context_properties context_properties[] = {
+		(cl_context_properties)CL_CONTEXT_PLATFORM,
+		(cl_context_properties)wrapper.platform, 0
+	};
+	
+	wrapper.context = clCreateContext(context_properties, num_entries, &wrapper.device, NULL, NULL, errcode);
 	if (!wrapper.context || CL_SUCCESS != *errcode) return wrapper;
 	
-	cl_command_queue_properties properties = 0;
+	cl_command_queue_properties command_queue_properties = 0;
 #ifdef CL_PROFILING_ENABLE
-	properties = CL_QUEUE_PROFILING_ENABLE;
+	command_queue_properties = CL_QUEUE_PROFILING_ENABLE;
 #endif
 	
-	wrapper.command_queue = clCreateCommandQueue(wrapper.context, wrapper.device, properties, errcode);
+	wrapper.command_queue = clCreateCommandQueue(wrapper.context, wrapper.device, command_queue_properties, errcode);
 	if (!wrapper.command_queue || CL_SUCCESS != *errcode) return wrapper;
 	
 	return wrapper;

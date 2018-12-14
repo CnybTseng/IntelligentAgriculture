@@ -1,5 +1,5 @@
-X86=1
-ARM=0
+X86=0
+ARM=1
 
 RM=rm
 EXE_SUFFIX=
@@ -51,7 +51,7 @@ ifeq ($(X86),1)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
 endif
 ifeq ($(ARM),1)
-CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -DNNPACK -pie -fPIE
+CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
 endif
 
 LIB=

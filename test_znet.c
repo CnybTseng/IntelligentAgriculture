@@ -47,6 +47,9 @@ extern void resize_image_neon_faster(unsigned char *pack, unsigned char *dst, in
                                      int nchannels, unsigned short *dx_tab, unsigned short *dy_tab);								   
 void test_resize_faster(int argc, char *argv[]);
 #endif
+#ifdef OPENCL
+cl_wrapper wrapper;
+#endif
 extern void resize_image_hv(unsigned char *src, unsigned char *dst, int src_w, int src_h,
                             int dst_w, int dst_h, int nchannels);
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height);
@@ -72,7 +75,6 @@ void test_resize_compare(int argc, char *argv[]);
 void test_activate_neon(int argc, char *argv[]);
 void test_nnpack(int argc, char *argv[]);
 void test_winograd_weight_transformation(int argc, char *argv[]);
-void test_cl_wrapper(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
@@ -409,10 +411,19 @@ void test_im2col(int argc, char *argv[])
 
 void test_gemm(int argc, char *argv[])
 {
-	int aw = 32;
-	int ah = 32;
-	int bw = 32;
-	int bh = 32;
+#ifdef OPENCL
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		return;
+	}
+#endif	
+	
+	int ah = 9;
+	int aw = 11;
+	int bh = 11;
+	int bw = 16;
 	
 	float *A = (float *)malloc(aw * ah * sizeof(float));
 	if (!A) {
@@ -453,7 +464,17 @@ void test_gemm(int argc, char *argv[])
 		C[i] = 1;
 	}
 	
-	gemm(0, 0, ch, cw, aw, 1, A, aw, B, bw, 1, C, cw);
+	int N = 10000;
+	if (argc > 1) N = atoi(argv[1]);
+	printf("gemm iterations %d\n", N);
+	
+	struct timeval t1, t2; 
+	gettimeofday(&t1, NULL);
+	for (int i = 0; i < N; ++i)
+		gemm(0, 0, ch, cw, aw, 0.56, A, aw, B, bw, 0.84, C, cw);
+	gettimeofday(&t2, NULL);
+	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
+	printf("duration: %f ms.\n", duration);
 	
 	FILE *fp = fopen("matrix.txt", "w");
 	if (!fp) {
@@ -490,6 +511,10 @@ void test_gemm(int argc, char *argv[])
 	
 	fclose(fp);
 	mmfree(3, A, B, C);
+	
+#ifdef OPENCL
+	cl_destroy_wrapper(wrapper);
+#endif
 }
 
 void test_activate(int argc, char *argv[])
@@ -1360,9 +1385,4 @@ void test_winograd_weight_transformation(int argc, char *argv[])
 	
 	save_volume(weights, 3, 3, 1, "weights.txt");
 	save_volume(transformed_weights, 8, 8, 1, "transformed_weights.txt");
-}
-
-void test_cl_wrapper(int argc, char *argv[])
-{
-	
 }

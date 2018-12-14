@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef OPENCL
+#	include "cl_wrapper.h"
+#endif
 #include "znet.h"
 #include "convolutional_layer.h"
 #include "maxpool_layer.h"
@@ -35,6 +38,10 @@ struct znet {
 static int convnet_parse_input_size(znet *net);
 static int convnet_parse_layer(znet *net);
 static int convnet_parse_weights(znet *net);
+
+#ifdef OPENCL
+cl_wrapper wrapper;
+#endif
 
 znet *znet_create(void *layers[], int nlayers)
 {
@@ -104,6 +111,16 @@ znet *znet_create(void *layers[], int nlayers)
 	net->threadpool = pthreadpool_create(8);
 	nnp_initialize();
 #endif	
+
+#ifdef OPENCL
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		znet_destroy(net);
+		return NULL;
+	}
+#endif
 	
 	return net;
 }
@@ -169,6 +186,10 @@ void znet_destroy(znet *net)
 	pthreadpool_destroy(net->threadpool);
 	nnp_deinitialize();
 #endif	
+
+#ifdef OPENCL
+	cl_destroy_wrapper(wrapper);
+#endif
 
 	free(net);
 	net = NULL;
