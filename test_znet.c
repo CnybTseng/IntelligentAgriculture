@@ -78,7 +78,7 @@ void test_winograd_weight_transformation(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_yolov3_tiny(argc, argv);
+	test_gemm(argc, argv);
 	
 	return 0;
 }
@@ -420,10 +420,10 @@ void test_gemm(int argc, char *argv[])
 	}
 #endif	
 	
-	int ah = 9;
-	int aw = 11;
-	int bh = 11;
-	int bw = 16;
+	int ah = 512;
+	int aw = 512;
+	int bh = 512;
+	int bw = 512;
 	
 	float *A = (float *)malloc(aw * ah * sizeof(float));
 	if (!A) {
@@ -438,8 +438,23 @@ void test_gemm(int argc, char *argv[])
 		exit(-1);
 	}
 	
-	int cw = bw;
-	int ch = ah;
+	int transa = 0;
+	int transb = 1;
+	
+	int cw, ch;
+	if (!transa && !transb) {
+		cw = bw;
+		ch = ah;
+	} else if (!transa && transb) {
+		cw = bh;
+		ch = ah;
+	} else if (transa && !transb) {
+		cw = bw;
+		ch = aw;
+	} else {
+		cw = bh;
+		ch = aw;
+	}
 	
 	float *C = (float *)malloc(cw * ch * sizeof(float));
 	if (!C) {
@@ -471,7 +486,7 @@ void test_gemm(int argc, char *argv[])
 	struct timeval t1, t2; 
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i)
-		gemm(0, 0, ch, cw, aw, 0.56, A, aw, B, bw, 0.84, C, cw);
+		gemm(0, 1, ch, cw, aw, 0.56, A, aw, B, bw, 0.84, C, cw);
 	gettimeofday(&t2, NULL);
 	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("duration: %f ms.\n", duration);

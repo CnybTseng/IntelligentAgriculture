@@ -13,6 +13,21 @@ gemm_nn_common(int m, int n, int k, float alpha, __global float *A, int lda,
 	C[global_row * ldc + global_col] = sum;
 }
 
+__kernel void
+gemm_nt_common(int m, int n, int k, float alpha, __global float *A, int lda,
+               __global float *B, int ldb, float beta, __global float *C, int ldc)
+{
+	const int global_col = get_global_id(0);
+	const int global_row = get_global_id(1);
+	
+	float sum = beta * C[global_row * ldc + global_col];
+	for (int l = 0; l < k; ++l) {
+		sum += alpha * A[global_row * lda + l] * B[global_col * ldb + l];
+	}
+	
+	C[global_row * ldc + global_col] = sum;
+}
+
 #define TILE_HEIGHT 8
 
 __kernel void
@@ -120,6 +135,161 @@ gemm_nn_8x16(int m, int n, int k, float alpha, __global float *A, int lda,
 	#pragma unroll TILE_HEIGHT
 	for (int j = 0; j < TILE_HEIGHT; ++j) {
 		vstore16(c[j], 0, C + ((tile_row << 3) + j) * ldc + (tile_col << 4));
+	}
+}
+
+__kernel void
+gemm_nt_1x4(int m, int n, int k, float alpha, __global float *A, int lda,
+            __global float *B, int ldb, float beta, __global float *C, int ldc)
+{
+	const int tile_col = get_global_id(0);
+	const int tile_row = get_global_id(1);
+	
+	float4 a;
+	float4 b;
+	float4 c4[4] = {0, 0, 0, 0};
+	float4 c = {0, 0, 0, 0};
+	
+	c = beta * vload4(0, C + tile_row * ldc + (tile_col << 2));
+	
+	for (int i = 0; i < k; i += 4) {
+		a = vload4(0, A + tile_row * lda + i);
+		for (int j = 0; j < 4; ++j) {
+			b = vload4(0, B + ((tile_col << 2) + j) * ldb + i);
+			c4[j] += alpha * a * b;
+		}
+	}
+	
+	c.x += c4[0].x + c4[0].y + c4[0].z + c4[0].w;
+	c.y += c4[1].x + c4[1].y + c4[1].z + c4[1].w;
+	c.z += c4[2].x + c4[2].y + c4[2].z + c4[2].w;
+	c.w += c4[3].x + c4[3].y + c4[3].z + c4[3].w;
+	
+	vstore4(c, 0, C + tile_row * ldc + (tile_col << 2));
+}
+
+__kernel void
+gemm_nt_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
+            __global float *B, int ldb, float beta, __global float *C, int ldc)
+{
+	const int tile_col = get_global_id(0);
+	const int tile_row = get_global_id(1);
+	
+	float4 a[TILE_HEIGHT];
+	float4 b[4];
+	float4 c84[TILE_HEIGHT][4] = {
+		{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+		{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
+	float4 c[TILE_HEIGHT] = {0, 0, 0, 0};
+	
+	#pragma unroll TILE_HEIGHT
+	for (int j = 0; j < TILE_HEIGHT; ++j) {
+		c[j] = beta * vload4(0, C + ((tile_row << 3) + j) * ldc + (tile_col << 2));
+	}
+	
+	for (int i = 0; i < k; i += 4) {
+		#pragma unroll TILE_HEIGHT
+		for (int j = 0; j < TILE_HEIGHT; ++j) {
+			a[j] = vload4(0, A + ((tile_row << 3) + j) * lda + i);
+		}
+		
+		#pragma unroll 4
+		for (int j = 0; j < 4; ++j) {
+			b[j] = vload4(0, B + ((tile_col << 2) + j) * ldb + i);
+		}
+		
+		#pragma unroll TILE_HEIGHT
+		for (int j = 0; j < TILE_HEIGHT; j++) {
+			c84[j][0] += alpha * a[j] * b[0];
+			c84[j][1] += alpha * a[j] * b[1];
+			c84[j][2] += alpha * a[j] * b[2];
+			c84[j][3] += alpha * a[j] * b[3];
+		}
+	}
+	
+	#pragma unroll TILE_HEIGHT
+	for (int j = 0; j < TILE_HEIGHT; ++j) {
+		c[j].x += c84[j][0].x + c84[j][0].y + c84[j][0].z + c84[j][0].w;
+		c[j].y += c84[j][1].x + c84[j][1].y + c84[j][1].z + c84[j][1].w;
+		c[j].z += c84[j][2].x + c84[j][2].y + c84[j][2].z + c84[j][2].w;
+		c[j].w += c84[j][3].x + c84[j][3].y + c84[j][3].z + c84[j][3].w;
+		
+		// c84[j][0].xy += c84[j][0].zw;
+		// c[j].x += c84[j][0].x + c84[j][0].y;
+		// 
+		// c84[j][1].xy += c84[j][1].zw;
+		// c[j].y += c84[j][1].x + c84[j][1].y;
+		// 
+		// c84[j][2].xy += c84[j][2].zw;
+		// c[j].z += c84[j][2].x + c84[j][2].y;
+		// 
+		// c84[j][3].xy += c84[j][3].zw;
+		// c[j].w += c84[j][3].x + c84[j][3].y;
+		
+		vstore4(c[j], 0, C + ((tile_row << 3) + j) * ldc + (tile_col << 2));
+	}
+}
+
+__kernel void
+gemm_nt_8x8(int m, int n, int k, float alpha, __global float *A, int lda,
+            __global float *B, int ldb, float beta, __global float *C, int ldc)
+{
+	const int tile_col = get_global_id(0);
+	const int tile_row = get_global_id(1);
+	
+	float8 a[TILE_HEIGHT];
+	float8 b[8];
+	float8 c88[TILE_HEIGHT][8];
+	float8 c[TILE_HEIGHT] = {0, 0, 0, 0, 0, 0, 0, 0};
+	
+	#pragma unroll TILE_HEIGHT
+	for (int j = 0; j < TILE_HEIGHT; ++j) {
+		c88[j][0] = 0;
+		c88[j][1] = 0;
+		c88[j][2] = 0;
+		c88[j][3] = 0;
+		c88[j][4] = 0;
+		c88[j][5] = 0;
+		c88[j][6] = 0;
+		c88[j][7] = 0;
+		c[j] = beta * vload8(0, C + ((tile_row << 3) + j) * ldc + (tile_col << 3));
+	}
+	
+	for (int i = 0; i < k; i += 8) {
+		#pragma unroll TILE_HEIGHT
+		for (int j = 0; j < TILE_HEIGHT; ++j) {
+			a[j] = vload8(0, A + ((tile_row << 3) + j) * lda + i);
+		}
+		
+		#pragma unroll 8
+		for (int j = 0; j < 8; ++j) {
+			b[j] = vload8(0, B + ((tile_col << 3) + j) * ldb + i);
+		}
+		
+		#pragma unroll TILE_HEIGHT
+		for (int j = 0; j < TILE_HEIGHT; j++) {
+			c88[j][0] += alpha * a[j] * b[0];
+			c88[j][1] += alpha * a[j] * b[1];
+			c88[j][2] += alpha * a[j] * b[2];
+			c88[j][3] += alpha * a[j] * b[3];
+			c88[j][4] += alpha * a[j] * b[4];
+			c88[j][5] += alpha * a[j] * b[5];
+			c88[j][6] += alpha * a[j] * b[6];
+			c88[j][7] += alpha * a[j] * b[7];
+		}
+	}
+	
+	#pragma unroll TILE_HEIGHT
+	for (int j = 0; j < TILE_HEIGHT; ++j) {
+		c[j].s0 += c88[j][0].s0 + c88[j][0].s1 + c88[j][0].s2 + c88[j][0].s3 + c88[j][0].s4 + c88[j][0].s5 + c88[j][0].s6 + c88[j][0].s7;
+		c[j].s1 += c88[j][1].s0 + c88[j][1].s1 + c88[j][1].s2 + c88[j][1].s3 + c88[j][1].s4 + c88[j][1].s5 + c88[j][1].s6 + c88[j][1].s7;
+		c[j].s2 += c88[j][2].s0 + c88[j][2].s1 + c88[j][2].s2 + c88[j][2].s3 + c88[j][2].s4 + c88[j][2].s5 + c88[j][2].s6 + c88[j][2].s7;
+		c[j].s3 += c88[j][3].s0 + c88[j][3].s1 + c88[j][3].s2 + c88[j][3].s3 + c88[j][3].s4 + c88[j][3].s5 + c88[j][3].s6 + c88[j][3].s7;
+		c[j].s4 += c88[j][4].s0 + c88[j][4].s1 + c88[j][4].s2 + c88[j][4].s3 + c88[j][4].s4 + c88[j][4].s5 + c88[j][4].s6 + c88[j][4].s7;
+		c[j].s5 += c88[j][5].s0 + c88[j][5].s1 + c88[j][5].s2 + c88[j][5].s3 + c88[j][5].s4 + c88[j][5].s5 + c88[j][5].s6 + c88[j][5].s7;
+		c[j].s6 += c88[j][6].s0 + c88[j][6].s1 + c88[j][6].s2 + c88[j][6].s3 + c88[j][6].s4 + c88[j][6].s5 + c88[j][6].s6 + c88[j][6].s7;
+		c[j].s7 += c88[j][7].s0 + c88[j][7].s1 + c88[j][7].s2 + c88[j][7].s3 + c88[j][7].s4 + c88[j][7].s5 + c88[j][7].s6 + c88[j][7].s7;
+		vstore8(c[j], 0, C + ((tile_row << 3) + j) * ldc + (tile_col << 3));
 	}
 }
 
