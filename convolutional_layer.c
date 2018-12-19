@@ -267,10 +267,14 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 	if (layer->batch_norm) merge_batchnorm_params(layer);
 #endif
 
-	// if (3 == layer->filter_size) {
-	// 	transform_weight(F6x6_3x3, layer->weights, layer->filter_size, layer->input_size.c,
-	// 		layer->nfilters, layer->transformed_weights);
-	// }
+#ifdef WINOGRAD_CONVOLUTION
+	if (3 == layer->filter_size) {
+		printf("transform weight matrix...");
+		transform_weight(F6x6_3x3, layer->weights, layer->filter_size, layer->input_size.c,
+			layer->nfilters, layer->transformed_weights);
+		printf("done\n");
+	}
+#endif
 }
 
 int convolutional_output_width(convolutional_layer *layer)

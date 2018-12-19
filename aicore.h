@@ -8,7 +8,7 @@
 Copyright (C) 2018 Chengdu ZLT Technology Co., Ltd.
 All rights reserved.
 
-This file is part of the intellectual agriculture toolkit and is made available under
+This file is part of the smart agriculture toolkit and is made available under
 the terms of the BSD license (see the COPYING file).
 */
 
@@ -19,6 +19,7 @@ the terms of the BSD license (see the COPYING file).
 #define AIC_ALLOCATE_FAIL    -1
 #define AIC_FILE_NOT_EXIST   -2
 #define AIC_PUSH_FAIL        -3
+#define AIC_INIT_FAIL        -4
 
 #include <stddef.h>
 

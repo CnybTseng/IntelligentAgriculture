@@ -16,7 +16,7 @@
 #include "image.h"
 #include "list.h"
 #include "box.h"
-#include "coco.names"
+#include "agriculture.names"
 #ifdef __ARM_NEON__
 	#include <arm_neon.h>
 #endif
@@ -78,7 +78,7 @@ void test_winograd_weight_transformation(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_gemm(argc, argv);
+	test_yolov3_tiny(argc, argv);
 	
 	return 0;
 }
@@ -239,7 +239,10 @@ void test_yolov3_tiny(int argc, char *argv[])
 	
 	int bigger_mask[] = {3, 4, 5};
 	int smaller_mask[] = {0, 1, 2};
-	int anchor_boxes[] = {10,14,  23,27,  37,58,  81,82,  135,169,  344,319};
+	int anchor_boxes[] = {61,117, 62,191, 199,118, 128,195, 92,293, 191,291};
+	const int scales = 3;
+	const int classes = 1;
+	const int object_tensor_depth = (4 + 1 + classes) * scales;
 	
 	dim3 input_size = {416, 416, 3};
 	layers[0] = make_convolutional_layer(LEAKY, input_size, 3, 16, 1, 1, 1, 1, &output_size);
@@ -278,10 +281,10 @@ void test_yolov3_tiny(int argc, char *argv[])
 	input_size = output_size;
 	layers[14] = make_convolutional_layer(LEAKY, input_size, 3, 512, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
-	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 0, &output_size);
+	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, object_tensor_depth, 1, 0, 1, 0, &output_size);
 	
 	input_size = output_size;
-	layers[16] = make_yolo_layer(input_size, 1, 3, 6, 80, bigger_mask, anchor_boxes);
+	layers[16] = make_yolo_layer(input_size, 1, 3, 6, classes, bigger_mask, anchor_boxes);
 	
 	int layer_ids1[] = {13};
 	void *routes1[] = {layers[13]};
@@ -301,12 +304,12 @@ void test_yolov3_tiny(int argc, char *argv[])
 	layers[21] = make_convolutional_layer(LEAKY, input_size, 3, 256, 1, 1, 1, 1, &output_size);
 	
 	input_size = output_size;
-	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, 255, 1, 0, 1, 0, &output_size);
+	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, object_tensor_depth, 1, 0, 1, 0, &output_size);
 	
 	input_size = output_size;
-	layers[23] = make_yolo_layer(input_size, 1, 3, 6, 80, smaller_mask, anchor_boxes);
+	layers[23] = make_yolo_layer(input_size, 1, 3, 6, classes, smaller_mask, anchor_boxes);
 	
-	znet *net = znet_create(layers, nlayers);
+	znet *net = znet_create(layers, nlayers, "agriculture.weights");
 	if (!net) return;
 	
 	znet_architecture(net);
@@ -562,7 +565,7 @@ void test_convolutional_layer(int argc, char *argv[])
 	void *layers[] = {
 		make_convolutional_layer(LINEAR, input_size, 3, 512, 1, 1, 1, 0, &output_size)};
 	
-	znet *net = znet_create(layers, 1);
+	znet *net = znet_create(layers, 1, "coco.weights");
 	znet_architecture(net);
 	
 	convolutional_layer *layer = (convolutional_layer *)layers[0];
@@ -627,7 +630,7 @@ void test_maxpool_layer(int argc, char *argv[])
 	dim3 output_size;
 	void *layers[] = {make_maxpool_layer(input_size, 3, 3, 0, 1, &output_size)};
 	
-	znet *net = znet_create(layers, 1);
+	znet *net = znet_create(layers, 1, "coco.weights");
 	znet_architecture(net);
 	
 	maxpool_layer *layer = (maxpool_layer *)layers[0];

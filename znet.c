@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #ifdef OPENCL
 #	include "cl_wrapper.h"
 #endif
@@ -30,6 +31,7 @@ struct znet {
 	forward_t *forward;
 	free_layer_t *free_layer;
 	int *is_output_layer;
+	char weight_filename[256];
 #ifdef NNPACK
 	pthreadpool_t threadpool;
 #endif
@@ -43,7 +45,7 @@ static int convnet_parse_weights(znet *net);
 cl_wrapper wrapper;
 #endif
 
-znet *znet_create(void *layers[], int nlayers)
+znet *znet_create(void *layers[], int nlayers, const char *weight_filename)
 {
 	znet *net = calloc(1, sizeof(znet));
 	if (!net) {
@@ -62,6 +64,7 @@ znet *znet_create(void *layers[], int nlayers)
 	net->forward = NULL;
 	net->free_layer = NULL;
 	net->is_output_layer = NULL;
+	strcpy(net->weight_filename, weight_filename);
 	
 	net->print_layer_info = calloc(nlayers, sizeof(print_layer_info_t));
 	if (!net->print_layer_info) {
@@ -102,6 +105,15 @@ znet *znet_create(void *layers[], int nlayers)
 	if (convnet_parse_input_size(net)) goto cleanup;
 	if (convnet_parse_layer(net)) goto cleanup;
 	
+#ifdef OPENCL
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#endif	
+	
 	if (convnet_parse_weights(net)) {
 		cleanup:znet_destroy(net);
 		return NULL;
@@ -111,16 +123,6 @@ znet *znet_create(void *layers[], int nlayers)
 	net->threadpool = pthreadpool_create(8);
 	nnp_initialize();
 #endif	
-
-#ifdef OPENCL
-	cl_int errcode;
-	wrapper = cl_create_wrapper(&errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		znet_destroy(net);
-		return NULL;
-	}
-#endif
 	
 	return net;
 }
@@ -309,7 +311,7 @@ int convnet_parse_layer(znet *net)
 
 int convnet_parse_weights(znet *net)
 {
-	FILE *fp = fopen("yolov3-tiny.weights", "rb");
+	FILE *fp = fopen(net->weight_filename, "rb");
 	if (!fp) {
 		fprintf(stderr, "fopen[%s:%d].\n", __FILE__, __LINE__);
 		return -1;
@@ -323,7 +325,13 @@ int convnet_parse_weights(znet *net)
 	fread(&major, sizeof(int), 1, fp);
 	fread(&minor, sizeof(int), 1, fp);
 	fread(&revision, sizeof(int), 1, fp);
-	fread(&seen, sizeof(unsigned long long), 1, fp);
+	if ((major * 10 + minor) >= 2 && major < 1000 && minor < 1000) {
+		fread(&seen, sizeof(unsigned long long), 1, fp);
+	} else {
+		int iseen = 0;
+		fread(&iseen, sizeof(int), 1, fp);
+		seen = iseen;
+	}
 	
 	printf("version %d.%d.%d, seen %u.\n", major, minor, revision, (unsigned int)seen);
 	for (int i = 0; i < net->nlayers; ++i) {

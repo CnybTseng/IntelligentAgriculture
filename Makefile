@@ -1,5 +1,5 @@
-X86=0
-ARM=1
+X86=1
+ARM=0
 
 RM=rm
 EXE_SUFFIX=
@@ -40,15 +40,16 @@ ARFLAGS=rcs
 INC=
 ifeq ($(X86),1)
 INC+= -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include" \
--I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include/CL"
+-I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include/CL" \
+-I../thirdparty/pthreads-2.9.1/include
 endif
 ifeq ($(ARM),1)
 INC+= -I../thirdparty/opencl-1.1/include -I../thirdparty/NNPACK/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DOPENCL -DCL_PROFILING_ENABLE
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DOPENCL
 ifeq ($(X86),1)
-CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__
+CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED
 endif
 ifeq ($(ARM),1)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
@@ -57,7 +58,7 @@ endif
 LIB=
 LIBS=
 ifeq ($(X86),1)
-LIB+= -L./ -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
+LIB+= -L"E:/Workspace/Project/trunk/aia/znet" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
 -L../thirdparty/pthreads-2.9.1/lib/x86
 LIBS+= -lOpenCL -lpthread
 endif
@@ -72,13 +73,13 @@ LDFLAGS+= -march=armv7-a -Wl,--fix-cortex-a8
 endif
 
 .PHONY:$(EXEC) all
-all:info $(SLIB) $(ALIB) $(EXEC)
+all:info $(SLIB) $(EXEC)
 
 test_znet$(EXE_SUFFIX):test_znet.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 test_aicore$(EXE_SUFFIX):test_aicore.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) libaicore.so
 	
 $(ALIB): $(OBJS)
 	$(AR) $(ARFLAGS) $@ $^

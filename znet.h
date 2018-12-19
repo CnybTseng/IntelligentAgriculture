@@ -155,9 +155,10 @@ void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *out
 /** @brief 创建卷积神经网络.
  ** @param layers 神经网络层列表.
  ** @param nlayers 神经网络层列表长度.
+ ** @param filename 权重文件名.
  ** @return 卷积神经网络实例指针.
  **/
-znet *znet_create(void *layers[], int nlayers);
+znet *znet_create(void *layers[], int nlayers, const char *weight_filename);
 
 /** @brief 训练卷积神经网络.本接口暂未实现.
  ** @param net 卷积神经网络实例指针.

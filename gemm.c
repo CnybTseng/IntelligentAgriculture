@@ -149,14 +149,14 @@ void gemm_tt(int m, int n, int k, float alpha, float *A, int lda,
 void gemm_nn_sse(int m, int n, int k, float alpha, float *A, int lda,
                  float *B, int ldb, float *C, int ldc)
 {
-	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+	
 }
 
 #elif __ARM_NEON__
 void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
                   float *B, int ldb, float *C, int ldc)
 {
-	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+	
 }
 #endif	
 
@@ -177,7 +177,7 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 		return;
 	}
 	
-	cl_kernel remainder_kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nn_common", &errcode);
+	cl_kernel common_kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nn_common", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -224,17 +224,17 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 		return;
 	}
 	
-	errcode  = clSetKernelArg(remainder_kernel, 0, sizeof(int), &m);
-	errcode |= clSetKernelArg(remainder_kernel, 1, sizeof(int), &n); 
-	errcode |= clSetKernelArg(remainder_kernel, 2, sizeof(int), &k); 
-	errcode |= clSetKernelArg(remainder_kernel, 3, sizeof(float), &alpha);
-	errcode |= clSetKernelArg(remainder_kernel, 4, sizeof(cl_mem), &d_A); 
-	errcode |= clSetKernelArg(remainder_kernel, 5, sizeof(int), &lda); 
-	errcode |= clSetKernelArg(remainder_kernel, 6, sizeof(cl_mem), &d_B); 
-	errcode |= clSetKernelArg(remainder_kernel, 7, sizeof(int), &ldb);
-	errcode |= clSetKernelArg(remainder_kernel, 8, sizeof(float), &beta);
-	errcode |= clSetKernelArg(remainder_kernel, 9, sizeof(cl_mem), &d_C); 
-	errcode |= clSetKernelArg(remainder_kernel, 10, sizeof(int), &ldc); 
+	errcode  = clSetKernelArg(common_kernel, 0, sizeof(int), &m);
+	errcode |= clSetKernelArg(common_kernel, 1, sizeof(int), &n); 
+	errcode |= clSetKernelArg(common_kernel, 2, sizeof(int), &k); 
+	errcode |= clSetKernelArg(common_kernel, 3, sizeof(float), &alpha);
+	errcode |= clSetKernelArg(common_kernel, 4, sizeof(cl_mem), &d_A); 
+	errcode |= clSetKernelArg(common_kernel, 5, sizeof(int), &lda); 
+	errcode |= clSetKernelArg(common_kernel, 6, sizeof(cl_mem), &d_B); 
+	errcode |= clSetKernelArg(common_kernel, 7, sizeof(int), &ldb);
+	errcode |= clSetKernelArg(common_kernel, 8, sizeof(float), &beta);
+	errcode |= clSetKernelArg(common_kernel, 9, sizeof(cl_mem), &d_C); 
+	errcode |= clSetKernelArg(common_kernel, 10, sizeof(int), &ldc); 
 	
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clSetKernelArg fail!\n");
@@ -248,21 +248,28 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 	
 	cl_event event;
 	cl_uint work_dim = 2;
-	size_t global_work_size[] = {_n >> 3, _m >> 3};
-	errcode = clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
-		NULL, 0, NULL, &event);
 	
-	if (n != _n) {
-		size_t global_work_offset[] = {_n, 0};
-		size_t global_work_size[] = {n - _n, _m};
-		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, remainder_kernel, work_dim, global_work_offset,
-			global_work_size, NULL, 0, NULL, &event);
-	}
-	
-	if (m != _m) {
-		size_t global_work_offset[] = {0, _m};
-		size_t global_work_size[] = {n, m - _m};
-		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, remainder_kernel, work_dim, global_work_offset,
+	if (_m && _n) {
+		size_t global_work_size[] = {_n >> 3, _m >> 3};
+		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
+			NULL, 0, NULL, &event);
+		
+		if (n != _n) {
+			size_t global_work_offset[] = {_n, 0};
+			size_t global_work_size[] = {n - _n, _m};
+			errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, global_work_offset,
+				global_work_size, NULL, 0, NULL, &event);
+		}
+		
+		if (m != _m) {
+			size_t global_work_offset[] = {0, _m};
+			size_t global_work_size[] = {n, m - _m};
+			errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, global_work_offset,
+				global_work_size, NULL, 0, NULL, &event);
+		}
+	} else {
+		size_t global_work_size[] = {n, m};
+		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, NULL,
 			global_work_size, NULL, 0, NULL, &event);
 	}
 	
@@ -287,7 +294,7 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 
 	clReleaseProgram(program);
 	clReleaseKernel(kernel);
-	clReleaseKernel(remainder_kernel);
+	clReleaseKernel(common_kernel);
 }
 
 void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,				
@@ -306,7 +313,7 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
 		return;
 	}
 	
-	cl_kernel remainder_kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nt_common", &errcode);
+	cl_kernel common_kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nt_common", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -353,17 +360,17 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
 		return;
 	}
 	
-	errcode  = clSetKernelArg(remainder_kernel, 0, sizeof(int), &m);
-	errcode |= clSetKernelArg(remainder_kernel, 1, sizeof(int), &n); 
-	errcode |= clSetKernelArg(remainder_kernel, 2, sizeof(int), &k); 
-	errcode |= clSetKernelArg(remainder_kernel, 3, sizeof(float), &alpha);
-	errcode |= clSetKernelArg(remainder_kernel, 4, sizeof(cl_mem), &d_A); 
-	errcode |= clSetKernelArg(remainder_kernel, 5, sizeof(int), &lda); 
-	errcode |= clSetKernelArg(remainder_kernel, 6, sizeof(cl_mem), &d_B); 
-	errcode |= clSetKernelArg(remainder_kernel, 7, sizeof(int), &ldb);
-	errcode |= clSetKernelArg(remainder_kernel, 8, sizeof(float), &beta);
-	errcode |= clSetKernelArg(remainder_kernel, 9, sizeof(cl_mem), &d_C); 
-	errcode |= clSetKernelArg(remainder_kernel, 10, sizeof(int), &ldc); 
+	errcode  = clSetKernelArg(common_kernel, 0, sizeof(int), &m);
+	errcode |= clSetKernelArg(common_kernel, 1, sizeof(int), &n); 
+	errcode |= clSetKernelArg(common_kernel, 2, sizeof(int), &k); 
+	errcode |= clSetKernelArg(common_kernel, 3, sizeof(float), &alpha);
+	errcode |= clSetKernelArg(common_kernel, 4, sizeof(cl_mem), &d_A); 
+	errcode |= clSetKernelArg(common_kernel, 5, sizeof(int), &lda); 
+	errcode |= clSetKernelArg(common_kernel, 6, sizeof(cl_mem), &d_B); 
+	errcode |= clSetKernelArg(common_kernel, 7, sizeof(int), &ldb);
+	errcode |= clSetKernelArg(common_kernel, 8, sizeof(float), &beta);
+	errcode |= clSetKernelArg(common_kernel, 9, sizeof(cl_mem), &d_C); 
+	errcode |= clSetKernelArg(common_kernel, 10, sizeof(int), &ldc); 
 	
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clSetKernelArg fail!\n");
@@ -384,14 +391,14 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
 	if (n != _n) {
 		size_t global_work_offset[] = {_n, 0};
 		size_t global_work_size[] = {n - _n, _m};
-		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, remainder_kernel, work_dim, global_work_offset,
+		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, global_work_offset,
 			global_work_size, NULL, 0, NULL, &event);
 	}
 	
 	if (m != _m) {
 		size_t global_work_offset[] = {0, _m};
 		size_t global_work_size[] = {n, m - _m};
-		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, remainder_kernel, work_dim, global_work_offset,
+		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, global_work_offset,
 			global_work_size, NULL, 0, NULL, &event);
 	}
 	
@@ -416,6 +423,6 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
 
 	clReleaseProgram(program);
 	clReleaseKernel(kernel);
-	clReleaseKernel(remainder_kernel);
+	clReleaseKernel(common_kernel);
 }
 #endif	 
