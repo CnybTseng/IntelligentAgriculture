@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <errno.h>
 #include "aicore.h"
 #include "bitmap.h"
 
@@ -28,7 +29,6 @@ void print_help()
 void test_aicore(int argc, char *argv[])
 {
 	int ret = ai_core_init(NULL);
-	ret = ai_core_init(NULL);
 	if (AIC_OK != ret) {
 		fprintf(stderr, "ai_core_init[%s:%d:%d].\n", __FILE__, __LINE__, ret);
 		return ai_core_free();

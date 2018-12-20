@@ -14,6 +14,7 @@ the terms of the BSD license (see the COPYING file).
 
 #include <stdio.h>
 #include <pthread.h>
+#include <errno.h>
 #include <time.h>
 #include "aicore.h"
 #include "znet.h"
@@ -78,7 +79,7 @@ void ai_core_free()
 
 int create_fifo()
 {
-	
+	image_input_queue;
 }
 
 int create_image_enqueue_thread()

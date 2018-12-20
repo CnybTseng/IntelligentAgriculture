@@ -1,5 +1,5 @@
-X86=1
-ARM=0
+X86=0
+ARM=1
 
 RM=rm
 EXE_SUFFIX=
@@ -29,13 +29,18 @@ endif
 ifeq ($(X86),1)
 CC=gcc
 endif
-
 ifeq ($(ARM),1)
 CC=arm-linux-androideabi-gcc
 endif
 
+ifeq ($(X86),1)
 AR=ar
 ARFLAGS=rcs
+endif
+ifeq ($(ARM),1)
+AR=/G/android-toolchain-api-24/arm-linux-androideabi/bin/ar
+ARFLAGS=rcs
+endif
 
 INC=
 ifeq ($(X86),1)
@@ -49,21 +54,21 @@ endif
 
 CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DOPENCL
 ifeq ($(X86),1)
-CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED
+CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED -D_WIN32
 endif
 ifeq ($(ARM),1)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
 endif
 
-LIB=
+LIB= -L./
 LIBS=
 ifeq ($(X86),1)
-LIB+= -L"E:/Workspace/Project/trunk/aia/znet" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
+LIB+= -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
 -L../thirdparty/pthreads-2.9.1/lib/x86
 LIBS+= -lOpenCL -lpthread
 endif
 ifeq ($(ARM),1)
-LIB+= -L./ -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib
+LIB+= -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib
 LIBS+= -lm -lpthreadpool -lnnpack -lcpuinfo -lclog -llog -lOpenCL
 endif
 
@@ -73,13 +78,13 @@ LDFLAGS+= -march=armv7-a -Wl,--fix-cortex-a8
 endif
 
 .PHONY:$(EXEC) all
-all:info $(SLIB) $(EXEC)
+all:info $(ALIB) $(SLIB) $(EXEC)
 
 test_znet$(EXE_SUFFIX):test_znet.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-test_aicore$(EXE_SUFFIX):test_aicore.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) libaicore.so
+test_aicore$(EXE_SUFFIX):test_aicore.o bitmap.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
 $(ALIB): $(OBJS)
 	$(AR) $(ARFLAGS) $@ $^
