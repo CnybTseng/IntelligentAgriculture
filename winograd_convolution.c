@@ -18,7 +18,7 @@ static float weight_transformation_matrix_transposed_f6x6_3x3[] = {
 	0, -2/9.0,  2/9.0, 1/45.0, -1/45.0, 1/90.0,  -1/90.0, 0,
 	0, -2/9.0, -2/9.0, 2/45.0,  2/45.0, 1/180.0, 1/180.0, 1
 };
-
+#if 0
 static float input_transformation_matrix_f6x6_3x3[] = {
 	1,      0, -21/4.0,       0,  21/4.0,       0, -1, 0,
 	0,      1,       1, -17/4.0, -17/4.0,       1,  1, 0,
@@ -60,7 +60,7 @@ static float output_inverse_transformation_matrix_transposed_f6x6_3x3[] = {
 	32, -16, 8, -4,  2,  -1,
 	0,    0, 0,  0,  0,   1
 };
-
+#endif
 int get_transformed_weight_matrix_size(WINOGRAD_CONV_TYPE conv)
 {
 	int filter_size;

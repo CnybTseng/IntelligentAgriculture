@@ -16,6 +16,7 @@ the terms of the BSD license (see the COPYING file).
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
+#include <unistd.h>
 #include "aicore.h"
 #include "znet.h"
 #include "list.h"
@@ -34,12 +35,12 @@ static pthread_t image_enqueue_tid;
 static pthread_t image_process_tid;
 static pthread_t image_dequeue_tid;
 static THREAD_STATUS thread_status;
-static Fifo *image_input_queue;
-static Fifo *image_output_queue;
-static char *image_input_queue_input_buffer;
-static char *image_input_queue_output_buffer;
-static char *image_output_queue_input_buffer;
-static char *image_output_queue_output_buffer;
+// static Fifo *image_input_queue;
+// static Fifo *image_output_queue;
+// static char *image_input_queue_input_buffer;
+// static char *image_input_queue_output_buffer;
+// static char *image_output_queue_input_buffer;
+// static char *image_output_queue_output_buffer;
 
 static void ai_core_init_routine();
 static int create_fifo();
@@ -79,7 +80,7 @@ void ai_core_free()
 
 int create_fifo()
 {
-	image_input_queue;
+	return 0;
 }
 
 int create_image_enqueue_thread()

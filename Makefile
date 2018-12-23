@@ -1,5 +1,6 @@
-X86=0
-ARM=1
+ARCH=x86
+GPU=1
+NNPACK=0
 
 RM=rm
 EXE_SUFFIX=
@@ -18,67 +19,73 @@ OBJS=$(filter-out $(EXEOBJ),$(ALLOBJS))
 
 SLIB=libaicore.so
 ALIB=libaicore.a
+
 _EXEC=test_znet test_aicore
-ifeq ($(X86),1)
+ifeq ($(ARCH),x86)
 EXE_SUFFIX=.exe
 EXEC=$(addsuffix $(EXE_SUFFIX),$(_EXEC))
-else
+else ifeq ($(ARCH),arm)
 EXEC=$(_EXEC)
 endif
 
-ifeq ($(X86),1)
+ifeq ($(ARCH),x86)
 CC=gcc
-endif
-ifeq ($(ARM),1)
-CC=arm-linux-androideabi-gcc
+else ifeq ($(ARCH),arm)
+CC=$(ANDROID_TOOLCHAIN_PATH)/bin/arm-linux-androideabi-gcc
 endif
 
-ifeq ($(X86),1)
+ifeq ($(ARCH),x86)
 AR=ar
 ARFLAGS=rcs
-endif
-ifeq ($(ARM),1)
-AR=/G/android-toolchain-api-24/arm-linux-androideabi/bin/ar
+else ifeq ($(ARCH),arm)
+AR=$(ANDROID_TOOLCHAIN_PATH)/arm-linux-androideabi/bin/ar
 ARFLAGS=rcs
 endif
 
 INC=
-ifeq ($(X86),1)
+ifeq ($(ARCH),x86)
 INC+= -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include" \
 -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include/CL" \
 -I../thirdparty/pthreads-2.9.1/include
-endif
-ifeq ($(ARM),1)
+else ifeq ($(ARCH),arm)
 INC+= -I../thirdparty/opencl-1.1/include -I../thirdparty/NNPACK/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DOPENCL
-ifeq ($(X86),1)
-CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED -D_WIN32
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV
+ifeq ($(GPU),1)
+CFLAGS+= -DOPENCL
+else ifeq ($(NNPACK),1)
+CFLAGS+= -DNNPACK
 endif
-ifeq ($(ARM),1)
+ifeq ($(ARCH),x86)
+CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED -DWINOGRAD_CONVOLUTION
+else ifeq ($(ARCH),arm)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
 endif
 
 LIB= -L./
 LIBS=
-ifeq ($(X86),1)
+ifeq ($(ARCH),x86)
 LIB+= -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
 -L../thirdparty/pthreads-2.9.1/lib/x86
-LIBS+= -lOpenCL -lpthread
-endif
-ifeq ($(ARM),1)
+LIBS+= -lpthread
+else ifeq ($(ARCH),arm)
 LIB+= -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib
-LIBS+= -lm -lpthreadpool -lnnpack -lcpuinfo -lclog -llog -lOpenCL
+LIBS+= -lm
+endif
+ifeq ($(GPU),1)
+LIBS+= -lOpenCL
+else ifeq ($(NNPACK),1)
+LIBS+= -lpthreadpool -lnnpack -lcpuinfo -lclog -llog
 endif
 
 LDFLAGS=$(LIB) $(LIBS)
-ifeq ($(ARM),1)
+ifeq ($(ARCH),arm)
 LDFLAGS+= -march=armv7-a -Wl,--fix-cortex-a8
 endif
 
 .PHONY:$(EXEC) all
-all:info $(ALIB) $(SLIB) $(EXEC)
+all:info $(SLIB) $(EXEC)
 
 test_znet$(EXE_SUFFIX):test_znet.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -100,4 +107,4 @@ info:
 	
 .PHONY:clean
 clean:
-	$(RM) $(ALLOBJS) $(EXEC) $(SLIB) $(ALIB)
+	$(RM) $(ALLOBJS) $(EXEC) $(SLIB)

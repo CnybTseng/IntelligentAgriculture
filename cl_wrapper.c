@@ -1,3 +1,4 @@
+#ifdef OPENCL
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -248,3 +249,4 @@ void cl_host_mem_free(int n, ...)
 	
 	va_end(ap);
 }
+#endif

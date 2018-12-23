@@ -1,3 +1,4 @@
+#ifdef OPENCL
 #ifndef _CL_WRAPPER_H_
 #define _CL_WRAPPER_H_
 
@@ -27,4 +28,5 @@ void cl_destroy_wrapper(cl_wrapper wrapper);
 }
 #endif
 
+#endif
 #endif
