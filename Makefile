@@ -1,6 +1,7 @@
-ARCH=x86
+ARCH=arm
 GPU=1
 NNPACK=0
+CLBLAST=1
 
 RM=rm
 EXE_SUFFIX=
@@ -48,17 +49,21 @@ INC+= -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include" \
 -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include/CL" \
 -I../thirdparty/pthreads-2.9.1/include
 else ifeq ($(ARCH),arm)
-INC+= -I../thirdparty/opencl-1.1/include -I../thirdparty/NNPACK/include
+INC+= -I../thirdparty/opencl-1.1/include -I../thirdparty/NNPACK/include \
+-I../thirdparty/clblast/include
 endif
 
 CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV
 ifeq ($(GPU),1)
 CFLAGS+= -DOPENCL
+ifeq ($(CLBLAST),1)
+CFLAGS+= -DCLBLAST
+endif
 else ifeq ($(NNPACK),1)
 CFLAGS+= -DNNPACK
 endif
 ifeq ($(ARCH),x86)
-CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED -DWINOGRAD_CONVOLUTION
+CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED
 else ifeq ($(ARCH),arm)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
 endif
@@ -70,11 +75,15 @@ LIB+= -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
 -L../thirdparty/pthreads-2.9.1/lib/x86
 LIBS+= -lpthread
 else ifeq ($(ARCH),arm)
-LIB+= -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib
+LIB+= -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib \
+-L../thirdparty/clblast/lib
 LIBS+= -lm
 endif
 ifeq ($(GPU),1)
 LIBS+= -lOpenCL
+ifeq ($(CLBLAST),1)
+LIBS+= -lclblast
+endif
 else ifeq ($(NNPACK),1)
 LIBS+= -lpthreadpool -lnnpack -lcpuinfo -lclog -llog
 endif

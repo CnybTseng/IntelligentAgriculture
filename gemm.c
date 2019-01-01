@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <omp.h>
 #ifdef __INTEL_SSE__
@@ -10,6 +11,10 @@
 #endif
 #ifdef OPENCL
 #	include "cl_wrapper.h"
+#	ifdef CLBLAST
+#		include "clblast_c.h"
+#		define CL_USE_DEPRECATED_OPENCL_1_1_APIS
+#	endif
 #endif
 #include "gemm.h"
 
@@ -34,7 +39,11 @@ extern cl_wrapper wrapper;
 void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc);
 void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,				
-                float *B, int ldb, float beta, float *C, int ldc);				
+                float *B, int ldb, float beta, float *C, int ldc);
+#ifdef CLBLAST
+void gemm_nn_blast(int m, int n, int k, float alpha, float *A, int lda,
+                   float *B, int ldb, float beta, float *C, int ldc);
+#endif				
 #endif					
 					
 /** @brief 通用的矩阵乘法,C=alhpa*A*B+beta*C.相乘前对A或B转置或共轭转置暂不支持.
@@ -164,6 +173,9 @@ void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
 void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {
+#ifdef CLBLAST
+	return gemm_nn_blast(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#endif	
 	cl_int errcode;
 	cl_program program = cl_make_wrapper_program(wrapper, "gemm.cl", &errcode);
 	if (CL_SUCCESS != errcode) {
@@ -425,4 +437,62 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
 	clReleaseKernel(kernel);
 	clReleaseKernel(common_kernel);
 }
+
+#ifdef CLBLAST
+void gemm_nn_blast(int m, int n, int k, float alpha, float *A, int lda,
+                   float *B, int ldb, float beta, float *C, int ldc)
+{
+	// Initializes the OpenCL platform
+	cl_uint num_platforms;
+	clGetPlatformIDs(0, NULL, &num_platforms);
+	cl_platform_id* platforms = (cl_platform_id*)malloc(num_platforms*sizeof(cl_platform_id));
+	clGetPlatformIDs(num_platforms, platforms, NULL);
+	cl_platform_id platform = platforms[0];
+
+	// Initializes the OpenCL device
+	cl_uint num_devices;
+	clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices);
+	cl_device_id* devices = (cl_device_id*)malloc(num_devices*sizeof(cl_device_id));
+	clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, num_devices, devices, NULL);
+	cl_device_id device = devices[0];
+
+	// Creates the OpenCL context, queue, and an event
+	cl_context context = clCreateContext(NULL, 1, &device, NULL, NULL, NULL);
+	cl_command_queue queue = clCreateCommandQueue(context, device, 0, NULL);
+	cl_event event = NULL;
+	
+	// Copy the matrices to the device
+	cl_mem device_a = clCreateBuffer(context, CL_MEM_READ_WRITE, m*k*sizeof(float), NULL, NULL);
+	cl_mem device_b = clCreateBuffer(context, CL_MEM_READ_WRITE, n*k*sizeof(float), NULL, NULL);
+	cl_mem device_c = clCreateBuffer(context, CL_MEM_READ_WRITE, m*n*sizeof(float), NULL, NULL);
+	clEnqueueWriteBuffer(queue, device_a, CL_TRUE, 0, m*k*sizeof(float), A, 0, NULL, NULL);
+	clEnqueueWriteBuffer(queue, device_b, CL_TRUE, 0, n*k*sizeof(float), B, 0, NULL, NULL);
+	clEnqueueWriteBuffer(queue, device_c, CL_TRUE, 0, m*n*sizeof(float), C, 0, NULL, NULL);
+
+	// Call the SGEMM routine.
+	CLBlastStatusCode status = CLBlastSgemm(CLBlastLayoutRowMajor,
+		CLBlastTransposeNo, CLBlastTransposeNo,
+		m, n, k,
+		alpha,
+		device_a, 0, lda,
+		device_b, 0, ldb,
+		beta,
+		device_c, 0, ldc,
+		&queue, &event);
+
+	// Wait for completion
+	if (status == CLBlastSuccess) {
+		clWaitForEvents(1, &event);
+		clReleaseEvent(event);
+	}
+
+	free(platforms);
+	free(devices);
+	clReleaseMemObject(device_a);
+	clReleaseMemObject(device_b);
+	clReleaseMemObject(device_c);
+	clReleaseCommandQueue(queue);
+	clReleaseContext(context);
+}
+#endif
 #endif	 
