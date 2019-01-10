@@ -379,6 +379,9 @@ __kernel void sgemm_mult_only(
 {
     int gx = get_global_id(0);
     int gy = get_global_id(1);
+	
+	const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
+	                          CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;
 
     if (((gx << 2) < n) && ((gy << 3) < m))
     {
@@ -397,7 +400,7 @@ int A_y_off = (gy << 3) * lda;
             #pragma unroll
             for (int i = 0; i < 4; i++)
             {
-                b[i] = read_imagef(Bi, (int2)(gx, pos + i));
+                b[i] = read_imagef(Bi, sampler, (int2)(gx, pos + i));
             }
 
             int A_off = A_y_off + pos;
