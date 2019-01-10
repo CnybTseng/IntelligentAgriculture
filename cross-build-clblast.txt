@@ -1,3 +1,0 @@
-export ANDROID_NDK_PATH=/e/Workspace/Software/android-ndk-r16b
-
-cmake -G "Unix Makefiles" -DCMAKE_SYSTEM_NAME=Android -DCMAKE_SYSTEM_VERSION=24 -DCMAKE_ANDROID_ARCH_ABI=armeabi-v7a -DCMAKE_ANDROID_NDK=$ANDROID_NDK_PATH -DCMAKE_ANDROID_STL_TYPE=gnustl_static -DOPENCL_ROOT=opencl-1.1 ..

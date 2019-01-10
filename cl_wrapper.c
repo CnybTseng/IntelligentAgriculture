@@ -108,7 +108,8 @@ cl_program cl_create_program_with_source(cl_device_id device, cl_context context
 	
 	if (!program || CL_SUCCESS != *errcode) return program;
 	
-	*errcode = clBuildProgram(program, 1, &device, NULL, NULL, NULL);
+	const char options[] = "-cl-fast-relaxed-math";
+	*errcode = clBuildProgram(program, 1, &device, options, NULL, NULL);
 	if (CL_SUCCESS != *errcode) {
 		char buildinfo[16384];
 		clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buildinfo), buildinfo, NULL);
@@ -152,7 +153,8 @@ cl_program cl_create_program_from_binary(cl_device_id device, cl_context context
 	
 	if (!program || CL_SUCCESS != *errcode) return program;
 	
-	*errcode = clBuildProgram(program, 1, &device, NULL, NULL, NULL);
+	const char options[] = "-cl-fast-relaxed-math";
+	*errcode = clBuildProgram(program, 1, &device, options, NULL, NULL);
 	if (CL_SUCCESS != *errcode) {
 		char buildinfo[16384];
 		clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buildinfo), buildinfo, NULL);

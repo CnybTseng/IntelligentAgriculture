@@ -367,71 +367,62 @@ gemm_nn_v3(int m, int n, int k, float alpha, __global float *A, int lda,
 		C[global_row * ldc + global_col] += acc;
 }
 
-__kernel void matmul_8x4_blocks(__global const float *matrix_a,
-                                __global const float *matrix_b,
-                                __global       float *matrix_c,
-                                               int    matrix_b_width,
-                                               int    matrix_a_width)
+__kernel void sgemm_mult_only(
+                           __global const float *A,
+                           const int lda,
+                           __global float *C,
+                           const int ldc,
+                           const int m,
+                           const int n,
+                           const int k,
+                           __read_only image2d_t Bi)
 {
-    const int wid_x = get_global_id(0);
-    const int wid_y = get_global_id(1);
+    int gx = get_global_id(0);
+    int gy = get_global_id(1);
 
-    float  a[8];
-    float4 b;
-    float4 c[8];
-
-    for (int i = 0; i < 8; ++i)
+    if (((gx << 2) < n) && ((gy << 3) < m))
     {
-        c[i] = (float4)(0.0f);
-    }
+        float4 a[8];
+        float4 b[4];
+        float4 c[8];
 
-    for (int j = 0; j < matrix_a_width; ++j)
-    {
-        b = vload4(0, matrix_b + j * matrix_b_width + (wid_x * 4));
-
-#pragma unroll
-        for (int i = 0; i < 8; ++i)
+        for (int i = 0; i < 8; i++)
         {
-            a[i] = matrix_a[((wid_y * 8) + i) * matrix_a_width + j];
+            c[i] = 0.0f;
+        }
+int A_y_off = (gy << 3) * lda;
+
+        for (int pos = 0; pos < k; pos += 4)
+        {
+            #pragma unroll
+            for (int i = 0; i < 4; i++)
+            {
+                b[i] = read_imagef(Bi, (int2)(gx, pos + i));
+            }
+
+            int A_off = A_y_off + pos;
+
+            #pragma unroll
+            for (int i = 0; i < 8; i++)
+            {
+                a[i] = vload4(0, A + A_off);
+                A_off += lda;
+            }
+
+            #pragma unroll
+            for (int i = 0; i < 8; i++)
+            {
+                c[i] += a[i].x * b[0] + a[i].y * b[1] + a[i].z * b[2] + a[i].w * b[3];
+            }
+
         }
 
-#pragma unroll
-        for (int i = 0; i < 8; ++i)
+        #pragma unroll
+        for (int i = 0; i < 8; i++)
         {
-            c[i] += a[i] * b;
+            int C_offs = ((gy << 3) + i) * ldc + (gx << 2);
+            vstore4(c[i], 0, C + C_offs);
         }
     }
 
-#pragma unroll
-    for (int i = 0; i < 8; ++i)
-    {
-        vstore4(c[i], 0, matrix_c + ((wid_y * 8) + i) * matrix_b_width + (wid_x * 4));
-    }
-}
-
-__kernel void matmul_remainder(__global const  float *matrix_a,
-                               __global const  float *matrix_b,
-                               __global        float *matrix_c,
-                                               int    x_rem_start,
-                                               int    y_rem_start,
-                                               int    matrix_b_width,
-                                               int    matrix_a_width)
-{
-    const int wid_x = get_global_id(0) + x_rem_start;
-    const int wid_y = get_global_id(1) + y_rem_start;
-
-    float c     = 0.0f;
-    int   a_idx = matrix_a_width * wid_y;
-    int   b_idx = wid_x;
-
-#pragma unroll 8
-    for (int i = 0; i < matrix_a_width; ++i)
-    {
-        c += matrix_a[a_idx] * matrix_b[b_idx];
-        ++a_idx;
-        b_idx += matrix_b_width;
-    }
-
-    const int c_idx = wid_x + matrix_b_width * wid_y;
-    matrix_c[c_idx] = c;
 }
