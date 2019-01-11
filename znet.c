@@ -112,6 +112,8 @@ znet *znet_create(void *layers[], int nlayers, const char *weight_filename)
 		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
+	
+	cl_get_platform_info(wrapper, CL_PLATFORM_VERSION);
 #endif	
 	
 	if (convnet_parse_weights(net)) {

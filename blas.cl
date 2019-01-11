@@ -1,6 +1,6 @@
 __kernel void
-gemm_nn_common(int m, int n, int k, float alpha, __global float *A, int lda,
-               __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nn_common(int m, int n, int k, float alpha, __global float *A, int lda,
+                __global float *B, int ldb, float beta, __global float *C, int ldc)
 {	
 	const int global_col = get_global_id(0);
 	const int global_row = get_global_id(1);
@@ -14,8 +14,8 @@ gemm_nn_common(int m, int n, int k, float alpha, __global float *A, int lda,
 }
 
 __kernel void
-gemm_nt_common(int m, int n, int k, float alpha, __global float *A, int lda,
-               __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nt_common(int m, int n, int k, float alpha, __global float *A, int lda,
+                __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
 	const int global_col = get_global_id(0);
 	const int global_row = get_global_id(1);
@@ -31,8 +31,8 @@ gemm_nt_common(int m, int n, int k, float alpha, __global float *A, int lda,
 #define TILE_HEIGHT 8
 
 __kernel void
-gemm_nn_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
-            __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nn_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
+             __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
 	const int tile_col = get_global_id(0);
 	const int tile_row = get_global_id(1);
@@ -67,8 +67,8 @@ gemm_nn_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
 }
 
 __kernel void
-gemm_nn_8x8(int m, int n, int k, float alpha, __global float *A, int lda,
-            __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nn_8x8(int m, int n, int k, float alpha, __global float *A, int lda,
+             __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
 	const int tile_col = get_global_id(0);
 	const int tile_row = get_global_id(1);
@@ -103,8 +103,8 @@ gemm_nn_8x8(int m, int n, int k, float alpha, __global float *A, int lda,
 }
 
 __kernel void
-gemm_nn_8x16(int m, int n, int k, float alpha, __global float *A, int lda,
-             __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nn_8x16(int m, int n, int k, float alpha, __global float *A, int lda,
+              __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
 	const int tile_col = get_global_id(0);
 	const int tile_row = get_global_id(1);
@@ -139,8 +139,8 @@ gemm_nn_8x16(int m, int n, int k, float alpha, __global float *A, int lda,
 }
 
 __kernel void
-gemm_nt_1x4(int m, int n, int k, float alpha, __global float *A, int lda,
-            __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nt_1x4(int m, int n, int k, float alpha, __global float *A, int lda,
+             __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
 	const int tile_col = get_global_id(0);
 	const int tile_row = get_global_id(1);
@@ -169,8 +169,8 @@ gemm_nt_1x4(int m, int n, int k, float alpha, __global float *A, int lda,
 }
 
 __kernel void
-gemm_nt_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
-            __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nt_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
+             __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
 	const int tile_col = get_global_id(0);
 	const int tile_row = get_global_id(1);
@@ -214,88 +214,13 @@ gemm_nt_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
 		c[j].z += c84[j][2].x + c84[j][2].y + c84[j][2].z + c84[j][2].w;
 		c[j].w += c84[j][3].x + c84[j][3].y + c84[j][3].z + c84[j][3].w;
 		
-		// c84[j][0].xy += c84[j][0].zw;
-		// c[j].x += c84[j][0].x + c84[j][0].y;
-		// 
-		// c84[j][1].xy += c84[j][1].zw;
-		// c[j].y += c84[j][1].x + c84[j][1].y;
-		// 
-		// c84[j][2].xy += c84[j][2].zw;
-		// c[j].z += c84[j][2].x + c84[j][2].y;
-		// 
-		// c84[j][3].xy += c84[j][3].zw;
-		// c[j].w += c84[j][3].x + c84[j][3].y;
-		
 		vstore4(c[j], 0, C + ((tile_row << 3) + j) * ldc + (tile_col << 2));
 	}
 }
 
 __kernel void
-gemm_nt_8x8(int m, int n, int k, float alpha, __global float *A, int lda,
-            __global float *B, int ldb, float beta, __global float *C, int ldc)
-{
-	const int tile_col = get_global_id(0);
-	const int tile_row = get_global_id(1);
-	
-	float8 a[TILE_HEIGHT];
-	float8 b[8];
-	float8 c88[TILE_HEIGHT][8];
-	float8 c[TILE_HEIGHT] = {0, 0, 0, 0, 0, 0, 0, 0};
-	
-	#pragma unroll TILE_HEIGHT
-	for (int j = 0; j < TILE_HEIGHT; ++j) {
-		c88[j][0] = 0;
-		c88[j][1] = 0;
-		c88[j][2] = 0;
-		c88[j][3] = 0;
-		c88[j][4] = 0;
-		c88[j][5] = 0;
-		c88[j][6] = 0;
-		c88[j][7] = 0;
-		c[j] = beta * vload8(0, C + ((tile_row << 3) + j) * ldc + (tile_col << 3));
-	}
-	
-	for (int i = 0; i < k; i += 8) {
-		#pragma unroll TILE_HEIGHT
-		for (int j = 0; j < TILE_HEIGHT; ++j) {
-			a[j] = vload8(0, A + ((tile_row << 3) + j) * lda + i);
-		}
-		
-		#pragma unroll 8
-		for (int j = 0; j < 8; ++j) {
-			b[j] = vload8(0, B + ((tile_col << 3) + j) * ldb + i);
-		}
-		
-		#pragma unroll TILE_HEIGHT
-		for (int j = 0; j < TILE_HEIGHT; j++) {
-			c88[j][0] += alpha * a[j] * b[0];
-			c88[j][1] += alpha * a[j] * b[1];
-			c88[j][2] += alpha * a[j] * b[2];
-			c88[j][3] += alpha * a[j] * b[3];
-			c88[j][4] += alpha * a[j] * b[4];
-			c88[j][5] += alpha * a[j] * b[5];
-			c88[j][6] += alpha * a[j] * b[6];
-			c88[j][7] += alpha * a[j] * b[7];
-		}
-	}
-	
-	#pragma unroll TILE_HEIGHT
-	for (int j = 0; j < TILE_HEIGHT; ++j) {
-		c[j].s0 += c88[j][0].s0 + c88[j][0].s1 + c88[j][0].s2 + c88[j][0].s3 + c88[j][0].s4 + c88[j][0].s5 + c88[j][0].s6 + c88[j][0].s7;
-		c[j].s1 += c88[j][1].s0 + c88[j][1].s1 + c88[j][1].s2 + c88[j][1].s3 + c88[j][1].s4 + c88[j][1].s5 + c88[j][1].s6 + c88[j][1].s7;
-		c[j].s2 += c88[j][2].s0 + c88[j][2].s1 + c88[j][2].s2 + c88[j][2].s3 + c88[j][2].s4 + c88[j][2].s5 + c88[j][2].s6 + c88[j][2].s7;
-		c[j].s3 += c88[j][3].s0 + c88[j][3].s1 + c88[j][3].s2 + c88[j][3].s3 + c88[j][3].s4 + c88[j][3].s5 + c88[j][3].s6 + c88[j][3].s7;
-		c[j].s4 += c88[j][4].s0 + c88[j][4].s1 + c88[j][4].s2 + c88[j][4].s3 + c88[j][4].s4 + c88[j][4].s5 + c88[j][4].s6 + c88[j][4].s7;
-		c[j].s5 += c88[j][5].s0 + c88[j][5].s1 + c88[j][5].s2 + c88[j][5].s3 + c88[j][5].s4 + c88[j][5].s5 + c88[j][5].s6 + c88[j][5].s7;
-		c[j].s6 += c88[j][6].s0 + c88[j][6].s1 + c88[j][6].s2 + c88[j][6].s3 + c88[j][6].s4 + c88[j][6].s5 + c88[j][6].s6 + c88[j][6].s7;
-		c[j].s7 += c88[j][7].s0 + c88[j][7].s1 + c88[j][7].s2 + c88[j][7].s3 + c88[j][7].s4 + c88[j][7].s5 + c88[j][7].s6 + c88[j][7].s7;
-		vstore8(c[j], 0, C + ((tile_row << 3) + j) * ldc + (tile_col << 3));
-	}
-}
-
-__kernel void
-gemm_nn_v2(int m, int n, int k, float alpha, __global float *A, int lda,
-        __global float *B, int ldb, float beta, __global float *C, int ldc)
+sgemm_nn_desktop_gpu(int m, int n, int k, float alpha, __global float *A, int lda,
+                     __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
 	const int local_row = get_local_id(0);
 	const int local_col = get_local_id(1);
@@ -325,48 +250,6 @@ gemm_nn_v2(int m, int n, int k, float alpha, __global float *A, int lda,
 	C[global_row * ldc + global_col] += acc;
 }
 
-__kernel void
-gemm_nn_v3(int m, int n, int k, float alpha, __global float *A, int lda,
-           __global float *B, int ldb, float beta, __global float *C, int ldc)
-{
-	const int local_row = get_local_id(0);
-	const int local_col = get_local_id(1);
-
-	enum {tile_size = 16};
-	__local float tile_A[tile_size][tile_size];
-	__local float tile_B[tile_size][tile_size];
-
-	const int global_row = get_group_id(0) * tile_size + local_row;
-	const int global_col = get_group_id(1) * tile_size + local_col;
-	
-	float acc = 0;
-	const int ntiles = k / tile_size + (k % tile_size != 0);
-	for (int i = 0; i < ntiles; ++i) {
-		int ax = i * tile_size + local_col;
-		if (global_row < m && ax < k)
-			tile_A[local_row][local_col] = A[global_row * lda + ax];
-		else
-			tile_A[local_row][local_col] = 0;
-		
-		int by = i * tile_size + local_row;
-		if (by < k && global_col < n)
-			tile_B[local_row][local_col] = B[by * ldb + global_col];
-		else
-			tile_B[local_row][local_col] = 0;
-		
-		barrier(CLK_LOCAL_MEM_FENCE);
-		
-		for (int j = 0; j < tile_size; ++j) {
-			acc += alpha * tile_A[local_row][j] * tile_B[j][local_col];
-		}
-		
-		barrier(CLK_LOCAL_MEM_FENCE);
-	}
-	
-	if (global_row < m && global_col < n)
-		C[global_row * ldc + global_col] += acc;
-}
-
 __kernel void sgemm_mult_only(
                            __global const float *A,
                            const int lda,
@@ -379,9 +262,6 @@ __kernel void sgemm_mult_only(
 {
     int gx = get_global_id(0);
     int gy = get_global_id(1);
-	
-	const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
-	                          CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;
 
     if (((gx << 2) < n) && ((gy << 3) < m))
     {
@@ -393,14 +273,14 @@ __kernel void sgemm_mult_only(
         {
             c[i] = 0.0f;
         }
-int A_y_off = (gy << 3) * lda;
+		int A_y_off = (gy << 3) * lda;
 
         for (int pos = 0; pos < k; pos += 4)
         {
             #pragma unroll
             for (int i = 0; i < 4; i++)
             {
-                b[i] = read_imagef(Bi, sampler, (int2)(gx, pos + i));
+                b[i] = read_imagef(Bi, (int2)(gx, pos + i));
             }
 
             int A_off = A_y_off + pos;
@@ -427,5 +307,4 @@ int A_y_off = (gy << 3) * lda;
             vstore4(c[i], 0, C + C_offs);
         }
     }
-
 }

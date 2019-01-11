@@ -28,11 +28,33 @@ extern "C"
 {
 #endif
 
+#ifdef AICORE_BUILD_DLL
+#ifdef _WIN32
+#	define AICORE_EXPORT __declspec(dllexport)
+#else
+#	define AICORE_EXPORT extern
+#endif
+#else
+#ifdef _WIN32
+#	define AICORE_EXPORT __declspec(dllimport)
+#else
+#	define AICORE_EXPORT
+#endif
+#endif
+
+/** @typedef struct ai_core_param.
+ ** @brief 初始化AICore模块的参数结构.
+ **/
+typedef struct {
+	int image_width;
+	int image_height;
+} ai_core_param;
+
 /** @brief 初始化AICore模块.
  ** @return 如果初始化成功,返回AIC_OK.
  **         如果初始化失败,返回错误码.
  **/
-extern int ai_core_init(void *);
+AICORE_EXPORT int ai_core_init(void *);
 
 /** @brief 将位图推送到AICore模块的队列缓冲区.
  ** @param bmp Bitmap格式图像数据.
@@ -40,18 +62,18 @@ extern int ai_core_init(void *);
  ** @return 如果推送成功,返回AIC_OK.
  **         如果推送失败,返回错误码.
  **/
-extern int ai_core_push_image(const char *bmp, size_t size);
+AICORE_EXPORT int ai_core_push_image(const char *bmp, size_t size);
 
 /** @brief 从AICore模块的队列中获取包含检测结果的位图.检测到的物体将以包围框标注.
  ** @param bmp Bitmap格式图像数据.
  ** @return 返回位图大小.在bmp不为空的情况下,如果获取成功,返回的位图大小等于位图文件头,信息头,调色板和
  **         图像数据大小总和,如果获取失败,返回0.在bmp为空的情况下,返回存储位图需要的缓冲区大小.
  **/
-extern size_t ai_core_pull_image(char *bmp);
+AICORE_EXPORT size_t ai_core_pull_image(char *bmp);
 
 /** @brief 释放AICore模块所有资源.
  **/
-extern void ai_core_free();
+AICORE_EXPORT void ai_core_free();
 
 #ifdef __cplusplus
 }

@@ -3,7 +3,7 @@ GPU=1
 NNPACK=0
 CLBLAST=0
 
-RM=rm
+RM=rm -f
 EXE_SUFFIX=
 
 CS=$(wildcard *.c)
@@ -18,8 +18,13 @@ EXEOBJ=test_znet.o test_aicore.o
 ALLOBJS=$(COBJS) $(CPPOBJS)
 OBJS=$(filter-out $(EXEOBJ),$(ALLOBJS))
 
+ifeq ($(ARCH),x86)
+SLIB=aicore.dll
+ALIB=libaicore.a
+else ifeq ($(ARCH),arm)
 SLIB=libaicore.so
 ALIB=libaicore.a
+endif
 
 _EXEC=test_znet test_aicore
 ifeq ($(ARCH),x86)
@@ -49,11 +54,11 @@ INC+= -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include" \
 -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include/CL" \
 -I../thirdparty/pthreads-2.9.1/include
 else ifeq ($(ARCH),arm)
-INC+= -I../thirdparty/opencl-1.1/include -I../thirdparty/NNPACK/include \
+INC+= -I../thirdparty/opencl-2.0/include -I../thirdparty/NNPACK/include \
 -I../thirdparty/clblast/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=200 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DAICORE_BUILD_DLL
 ifeq ($(GPU),1)
 CFLAGS+= -DOPENCL -DCL_PROFILING_ENABLE
 ifeq ($(CLBLAST),1)
@@ -68,14 +73,14 @@ else ifeq ($(ARCH),arm)
 CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
 endif
 
-LIB= -L./
+LIB= -L.
 LIBS=
 ifeq ($(ARCH),x86)
 LIB+= -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
 -L../thirdparty/pthreads-2.9.1/lib/x86
 LIBS+= -lpthread
 else ifeq ($(ARCH),arm)
-LIB+= -L../thirdparty/opencl-1.1/lib/armeabi-v7a -L../thirdparty/NNPACK/lib \
+LIB+= -L../thirdparty/opencl-2.0/lib/armeabi-v7a -L../thirdparty/NNPACK/lib \
 -L../thirdparty/clblast/lib
 LIBS+= -lm
 endif
@@ -89,7 +94,9 @@ LIBS+= -lpthreadpool -lnnpack -lcpuinfo -lclog -llog
 endif
 
 LDFLAGS=$(LIB) $(LIBS)
-ifeq ($(ARCH),arm)
+ifeq ($(ARCH),x86)
+LDFLAGS+= -Wl,--out-implib,$(ALIB)
+else ifeq ($(ARCH),arm)
 LDFLAGS+= -march=armv7-a -Wl,--fix-cortex-a8
 endif
 
@@ -116,4 +123,4 @@ info:
 	
 .PHONY:clean
 clean:
-	$(RM) $(ALLOBJS) $(EXEC) $(SLIB)
+	$(RM) $(ALLOBJS) $(EXEC) $(SLIB) $(ALIB)

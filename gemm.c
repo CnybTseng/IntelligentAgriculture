@@ -11,10 +11,6 @@
 #endif
 #ifdef OPENCL
 #	include "cl_wrapper.h"
-#	ifdef CLBLAST
-#		include "clblast_c.h"
-#		define CL_USE_DEPRECATED_OPENCL_1_1_APIS
-#	endif
 #endif
 #include "gemm.h"
 
@@ -41,11 +37,7 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc);
 void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,				
-                float *B, int ldb, float beta, float *C, int ldc);
-#ifdef CLBLAST
-void gemm_nn_blast(int m, int n, int k, float alpha, float *A, int lda,
-                   float *B, int ldb, float beta, float *C, int ldc);
-#endif				
+                float *B, int ldb, float beta, float *C, int ldc);				
 #endif					
 					
 /** @brief 通用的矩阵乘法,C=alhpa*A*B+beta*C.相乘前对A或B转置或共轭转置暂不支持.
@@ -121,7 +113,7 @@ void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
 		}
 	}
 #else
-	gemm_nn_cl_v2(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+	gemm_nn_cl(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 #endif
 }
 			 
@@ -175,23 +167,22 @@ void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
 void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {
-#ifdef CLBLAST
-	return gemm_nn_blast(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
-#endif	
+	return gemm_nn_cl_v2(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+	
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "gemm.cl", &errcode);
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
 	}
 	
-	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nn_8x8", &errcode);
+	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_8x8", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
 	}
 	
-	cl_kernel common_kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nn_common", &errcode);
+	cl_kernel common_kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_common", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -315,7 +306,7 @@ void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "gemm.cl", &errcode);
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -342,9 +333,10 @@ void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
 	memcpy(h_C, C, m * n * sizeof(float));
 	clEnqueueUnmapMemObject(wrapper.command_queue, d_C, h_C, 0, NULL, &event);
 		
+	cl_mem_flags flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;	
 	cl_image_format image_format = {CL_RGBA, CL_FLOAT};
-	cl_mem d_B = clCreateImage2D(wrapper.context, CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
-		&image_format, n >> 2, k, 0, NULL, &errcode);
+	cl_image_desc image_desc = {CL_MEM_OBJECT_IMAGE2D, n >> 2, k, n * sizeof(float)};	
+	cl_mem d_B = clCreateImage(wrapper.context, flags, &image_format, &image_desc, NULL, &errcode);
 	
 	size_t origin[] = {0, 0, 0};
 	size_t region[] = {n >> 2, k, 1};
@@ -373,9 +365,9 @@ void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
 	
 	cl_uint work_dim = 2;
 	size_t global_work_size[] = {n >> 2, m >> 3};
-	size_t local_work_size[] = {16, 32};
+	size_t local_work_size[] = {32, 32};
 	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
-		NULL, 0, NULL, &event);
+		local_work_size, 0, NULL, &event);
 
 	clFinish(wrapper.command_queue);
 #ifdef CL_PROFILING_ENABLE	
@@ -403,19 +395,19 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "gemm.cl", &errcode);
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
 	}
 	
-	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nt_8x4", &errcode);
+	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nt_8x4", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
 	}
 	
-	cl_kernel common_kernel = cl_make_wrapper_kernel(wrapper, program, "gemm_nt_common", &errcode);
+	cl_kernel common_kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nt_common", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -527,62 +519,4 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
 	clReleaseKernel(kernel);
 	clReleaseKernel(common_kernel);
 }
-
-#ifdef CLBLAST
-void gemm_nn_blast(int m, int n, int k, float alpha, float *A, int lda,
-                   float *B, int ldb, float beta, float *C, int ldc)
-{
-	// Initializes the OpenCL platform
-	cl_uint num_platforms;
-	clGetPlatformIDs(0, NULL, &num_platforms);
-	cl_platform_id* platforms = (cl_platform_id*)malloc(num_platforms*sizeof(cl_platform_id));
-	clGetPlatformIDs(num_platforms, platforms, NULL);
-	cl_platform_id platform = platforms[0];
-
-	// Initializes the OpenCL device
-	cl_uint num_devices;
-	clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices);
-	cl_device_id* devices = (cl_device_id*)malloc(num_devices*sizeof(cl_device_id));
-	clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, num_devices, devices, NULL);
-	cl_device_id device = devices[0];
-
-	// Creates the OpenCL context, queue, and an event
-	cl_context context = clCreateContext(NULL, 1, &device, NULL, NULL, NULL);
-	cl_command_queue queue = clCreateCommandQueue(context, device, 0, NULL);
-	cl_event event = NULL;
-	
-	// Copy the matrices to the device
-	cl_mem device_a = clCreateBuffer(context, CL_MEM_READ_WRITE, m*k*sizeof(float), NULL, NULL);
-	cl_mem device_b = clCreateBuffer(context, CL_MEM_READ_WRITE, n*k*sizeof(float), NULL, NULL);
-	cl_mem device_c = clCreateBuffer(context, CL_MEM_READ_WRITE, m*n*sizeof(float), NULL, NULL);
-	clEnqueueWriteBuffer(queue, device_a, CL_TRUE, 0, m*k*sizeof(float), A, 0, NULL, NULL);
-	clEnqueueWriteBuffer(queue, device_b, CL_TRUE, 0, n*k*sizeof(float), B, 0, NULL, NULL);
-	clEnqueueWriteBuffer(queue, device_c, CL_TRUE, 0, m*n*sizeof(float), C, 0, NULL, NULL);
-
-	// Call the SGEMM routine.
-	CLBlastStatusCode status = CLBlastSgemm(CLBlastLayoutRowMajor,
-		CLBlastTransposeNo, CLBlastTransposeNo,
-		m, n, k,
-		alpha,
-		device_a, 0, lda,
-		device_b, 0, ldb,
-		beta,
-		device_c, 0, ldc,
-		&queue, &event);
-
-	// Wait for completion
-	if (status == CLBlastSuccess) {
-		clWaitForEvents(1, &event);
-		clReleaseEvent(event);
-	}
-
-	free(platforms);
-	free(devices);
-	clReleaseMemObject(device_a);
-	clReleaseMemObject(device_b);
-	clReleaseMemObject(device_c);
-	clReleaseCommandQueue(queue);
-	clReleaseContext(context);
-}
-#endif
 #endif	 

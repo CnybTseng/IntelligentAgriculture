@@ -22,28 +22,34 @@ the terms of the BSD license (see the COPYING file).
 #include "list.h"
 #include "fifo.h"
 
+#define CACHE_IMAGE_NUMBER							8
+#define NETWORK_INPUT_WIDTH							416
+#define NETWORK_INPUT_HEIGHT						416
+
 typedef enum {
 	THREAD_RUNNING,
 	THREAD_DEAD
 } THREAD_STATUS;
 
 static void *layers[24];
-static znet *net;
-static pthread_once_t once_control = PTHREAD_ONCE_INIT;
+static znet *net = NULL;
+static pthread_once_t module_create_once_control = PTHREAD_ONCE_INIT;
 static int init_status;
 static pthread_t image_enqueue_tid;
 static pthread_t image_process_tid;
 static pthread_t image_dequeue_tid;
 static THREAD_STATUS thread_status;
-// static Fifo *image_input_queue;
-// static Fifo *image_output_queue;
-// static char *image_input_queue_input_buffer;
-// static char *image_input_queue_output_buffer;
-// static char *image_output_queue_input_buffer;
-// static char *image_output_queue_output_buffer;
+static ai_core_param core_param;
+static Fifo *raw_image_queue = NULL;
+static Fifo *normalized_image_queue = NULL;
+static Fifo *output_image_queue = NULL;
+static char *image_input_queue_input_buffer = NULL;
+static char *image_input_queue_output_buffer = NULL;
+static char *image_output_queue_input_buffer = NULL;
+static char *image_output_queue_output_buffer = NULL;
 
 static void ai_core_init_routine();
-static int create_fifo();
+static void create_image_fifo();
 static int create_image_enqueue_thread();
 static int create_image_process_thread();
 static int create_image_dequeue_thread();
@@ -51,10 +57,20 @@ static void *image_enqueue_thread(void *param);
 static void *image_process_thread(void *param);
 static void *image_dequeue_thread(void *param);
 static void wait_for_thread_dead(pthread_t tid);
+static unsigned int roundup_power_of_2(unsigned int a);
 
 int ai_core_init(void *param)
 {
-	pthread_once(&once_control, &ai_core_init_routine);
+	if (param) {
+		core_param.image_width = ((ai_core_param *)param)->image_width;
+		core_param.image_height = ((ai_core_param *)param)->image_height;
+	} else {
+		core_param.image_width = 1920;
+		core_param.image_height = 1080;
+	}
+	
+	pthread_once(&module_create_once_control, &ai_core_init_routine);
+	
 	return init_status;
 }
 
@@ -76,11 +92,9 @@ void ai_core_free()
 	wait_for_thread_dead(image_process_tid);
 	wait_for_thread_dead(image_dequeue_tid);
 	znet_destroy(net);
-}
-
-int create_fifo()
-{
-	return 0;
+	fifo_delete(raw_image_queue);
+	fifo_delete(normalized_image_queue);
+	fifo_delete(output_image_queue);
 }
 
 int create_image_enqueue_thread()
@@ -143,7 +157,7 @@ void ai_core_init_routine()
 	const int classes = 1;
 	const int object_tensor_depth = (4 + 1 + classes) * scales;
 	
-	dim3 input_size = {416, 416, 3};
+	dim3 input_size = {NETWORK_INPUT_WIDTH, NETWORK_INPUT_HEIGHT, 3};
 	layers[0] = make_convolutional_layer(LEAKY, input_size, 3, 16, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[1] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
@@ -214,6 +228,24 @@ void ai_core_init_routine()
 		return;
 	}
 	
+	raw_image_queue = fifo_alloc(roundup_power_of_2(core_param.image_width * core_param.image_height * 3 * CACHE_IMAGE_NUMBER));
+	if (!raw_image_queue) {
+		init_status = AIC_ALLOCATE_FAIL;
+		return;
+	}
+	
+	normalized_image_queue = fifo_alloc(roundup_power_of_2(NETWORK_INPUT_WIDTH * NETWORK_INPUT_HEIGHT * 3 * CACHE_IMAGE_NUMBER));
+	if (!normalized_image_queue) {
+		init_status = AIC_ALLOCATE_FAIL;
+		return;
+	}
+	
+	output_image_queue = fifo_alloc(roundup_power_of_2(core_param.image_width * core_param.image_height * 3 * CACHE_IMAGE_NUMBER));
+	if (!output_image_queue) {
+		init_status = AIC_ALLOCATE_FAIL;
+		return;
+	}
+	
 	thread_status = THREAD_RUNNING;
 	if (create_image_enqueue_thread() || create_image_process_thread() || create_image_dequeue_thread()) {
 		init_status = AIC_INIT_FAIL;
@@ -226,8 +258,9 @@ void ai_core_init_routine()
 
 void *image_enqueue_thread(void *param)
 {
+	struct timespec req = {0, 100000000};
 	while (thread_status == THREAD_RUNNING) {
-		usleep(100000);
+		nanosleep(&req, NULL);
 	}
 	
 	return 0;
@@ -235,8 +268,9 @@ void *image_enqueue_thread(void *param)
 
 void *image_process_thread(void *param)
 {
+	struct timespec req = {0, 100000000};
 	while (thread_status == THREAD_RUNNING) {
-		usleep(100000);
+		nanosleep(&req, NULL);
 	}
 	
 	return 0;
@@ -244,8 +278,9 @@ void *image_process_thread(void *param)
 
 void *image_dequeue_thread(void *param)
 {
+	struct timespec req = {0, 100000000};
 	while (thread_status == THREAD_RUNNING) {
-		usleep(100000);
+		nanosleep(&req, NULL);
 	}
 	
 	return 0;
@@ -266,4 +301,21 @@ void wait_for_thread_dead(pthread_t tid)
 			continue;
 		}
 	}
+}
+
+unsigned int roundup_power_of_2(unsigned int a)
+{
+	unsigned int position;
+	int i;
+	
+	if (a == 0) {
+		return 0;
+	}
+
+	position = 0;
+	for (i = a; i != 0; i >>= 1) {
+		position++;
+	}
+
+	return (unsigned int)(1 << position);
 }

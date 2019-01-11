@@ -78,6 +78,31 @@ void cl_destroy_wrapper(cl_wrapper wrapper)
 	clReleaseContext(wrapper.context);
 }
 
+void cl_get_platform_info(cl_wrapper wrapper, cl_platform_info param_name)
+{
+	switch (param_name) {
+	case CL_PLATFORM_PROFILE:
+		break;
+	case CL_PLATFORM_VERSION: {
+		char version[1024];
+		clGetPlatformInfo(wrapper.platform, param_name, sizeof(version), version, NULL);
+		printf("%s\n", version);
+	}	break;
+	case CL_PLATFORM_NAME:
+		break;
+	case CL_PLATFORM_VENDOR:
+		break;
+	case CL_PLATFORM_EXTENSIONS: {
+		char extensions[1024] = {'\0'};
+		clGetPlatformInfo(wrapper.platform, param_name, sizeof(extensions), extensions, NULL);
+		if (strlen(extensions) <= 1) printf("couldn't identify available OpenCL extensions\n");
+		else printf("%s\n", extensions);
+	}	break;
+	default:
+		break;
+	}
+}
+
 cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename, cl_int *errcode)
 {		
 	struct stat stbuf;
