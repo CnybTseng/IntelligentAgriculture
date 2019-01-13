@@ -78,7 +78,7 @@ void test_winograd_weight_transformation(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_gemm(argc, argv);
+	test_yolov3_tiny(argc, argv);
 	
 	return 0;
 }

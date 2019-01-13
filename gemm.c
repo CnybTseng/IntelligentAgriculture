@@ -99,7 +99,7 @@ void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
 #if !defined OPENCL
 #ifdef __ARM_NEON__
 	gemm_nn_neon(m, n, k, alpha, A, lda, B, ldb, C, ldc);
-#else __INTEL_SSE__
+#elif __INTEL_SSE__
 	gemm_nn_sse(m, n, k, alpha, A, lda, B, ldb, C, ldc);
 #endif
 	#pragma omp parallel for

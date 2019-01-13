@@ -64,6 +64,10 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->input = NULL;
 	layer->vecmat = NULL;
 	layer->output = NULL;
+#ifdef NNPACK
+	layer->transformed_kernel_size = 0;
+	layer->transformed_kernel = NULL;
+#endif
 	
 	if (output_size) {
 		*output_size = layer->output_size;
@@ -167,6 +171,13 @@ void free_convolution_layer(void *_layer)
 		free(layer->output);
 		layer->output = NULL;
 	}
+	
+#ifdef NNPACK
+	if (layer->transformed_kernel) {
+		free(layer->transformed_kernel);
+		layer->transformed_kernel = NULL;
+	}
+#endif	
 	
 	free(layer);
 	layer = NULL;
@@ -363,27 +374,96 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 	
 	float zeros[2048];
 	for (int i = 0; i < 2048; ++i) zeros[i] = 0;
-	
-	nnp_convolution_inference(
-		nnp_convolution_algorithm_auto,
-		nnp_convolution_transform_strategy_tuple_based,
-		layer->input_size.c,
-		layer->nfilters,
-		input_size,
-		input_padding,
-		kernel_size,
-		stride,
-		layer->input,
-		layer->weights,
-		zeros,
-		layer->output,
-		NULL,
-		NULL,
-		nnp_activation_identity,
-		NULL,
-		znet_threadpool(net),
-		NULL
-	);
+
+	if (3 != layer->filter_size) {
+		nnp_convolution_inference(
+			nnp_convolution_algorithm_auto,
+			nnp_convolution_transform_strategy_tuple_based,
+			layer->input_size.c,
+			layer->nfilters,
+			input_size,
+			input_padding,
+			kernel_size,
+			stride,
+			layer->input,
+			layer->weights,
+			zeros,
+			layer->output,
+			NULL,
+			NULL,
+			nnp_activation_identity,
+			NULL,
+			znet_threadpool(net),
+			NULL
+		);
+	} else {
+		if (NULL == layer->transformed_kernel) {
+			nnp_convolution_inference(
+				nnp_convolution_algorithm_auto,
+				nnp_convolution_transform_strategy_precompute,
+				layer->input_size.c,
+				layer->nfilters,
+				input_size,
+				input_padding,
+				kernel_size,
+				stride,
+				NULL,
+				NULL,
+				NULL,
+				NULL,
+				NULL,
+				&layer->transformed_kernel_size,
+				nnp_activation_identity,
+				NULL,
+				znet_threadpool(net),
+				NULL
+			);
+			
+			layer->transformed_kernel = calloc(layer->transformed_kernel_size, 1);
+			
+			nnp_convolution_inference(
+				nnp_convolution_algorithm_auto,
+				nnp_convolution_transform_strategy_precompute,
+				layer->input_size.c,
+				layer->nfilters,
+				input_size,
+				input_padding,
+				kernel_size,
+				stride,
+				layer->input,
+				layer->weights,
+				NULL,
+				layer->output,
+				layer->transformed_kernel,
+				&layer->transformed_kernel_size,
+				nnp_activation_identity,
+				NULL,
+				znet_threadpool(net),
+				NULL
+			);
+		}
+		
+		nnp_convolution_inference(
+			nnp_convolution_algorithm_auto,
+			nnp_convolution_transform_strategy_reuse,
+			layer->input_size.c,
+			layer->nfilters,
+			input_size,
+			input_padding,
+			kernel_size,
+			stride,
+			layer->input,
+			layer->transformed_kernel,
+			zeros,
+			layer->output,
+			NULL,
+			NULL,
+			nnp_activation_identity,
+			NULL,
+			znet_threadpool(net),
+			NULL
+		);
+	}
 
 #ifndef MERGE_BATCHNORM_TO_CONV	
 	if (layer->batch_norm) {

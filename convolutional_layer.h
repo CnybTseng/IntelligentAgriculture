@@ -33,6 +33,10 @@ typedef struct {
 	float *input;
 	float *vecmat;
 	float *output;
+#ifdef NNPACK
+	size_t transformed_kernel_size;
+	float *transformed_kernel;
+#endif
 } convolutional_layer;
 
 void free_convolution_layer(void *_layer);
