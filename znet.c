@@ -105,17 +105,6 @@ znet *znet_create(void *layers[], int nlayers, const char *weight_filename)
 	if (convnet_parse_input_size(net)) goto cleanup;
 	if (convnet_parse_layer(net)) goto cleanup;
 	
-#ifdef OPENCL
-	cl_int errcode;
-	wrapper = cl_create_wrapper(&errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-	
-	cl_get_platform_info(wrapper, CL_PLATFORM_VERSION);
-#endif	
-	
 	if (convnet_parse_weights(net)) {
 		cleanup:znet_destroy(net);
 		return NULL;
@@ -190,10 +179,6 @@ void znet_destroy(znet *net)
 	pthreadpool_destroy(net->threadpool);
 	nnp_deinitialize();
 #endif	
-
-#ifdef OPENCL
-	cl_destroy_wrapper(wrapper);
-#endif
 
 	free(net);
 	net = NULL;

@@ -13,7 +13,6 @@
 #include "zutils.h"
 #include "im2col.h"
 #include "gemm.h"
-#include "winograd_convolution.h"
 
 #ifdef MERGE_BATCHNORM_TO_CONV
 static void merge_batchnorm_params(convolutional_layer *layer);
@@ -68,6 +67,9 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->transformed_kernel_size = 0;
 	layer->transformed_kernel = NULL;
 #endif
+#ifdef OPENCL
+	layer->wt_context = NULL;
+#endif
 	
 	if (output_size) {
 		*output_size = layer->output_size;
@@ -121,8 +123,16 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
 	if (!layer->output) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
-		cleanup:free_convolution_layer(layer);
+		goto cleanup;
 	}
+	
+#ifdef OPENCL
+	layer->wt_context = create_weight_transform_context(F6x6_3x3);
+	if (!layer->wt_context) {
+		cleanup:free_convolution_layer(layer);
+		return 0;
+	}
+#endif	
 	
 	return (void *)layer;
 }
@@ -178,6 +188,12 @@ void free_convolution_layer(void *_layer)
 		layer->transformed_kernel = NULL;
 	}
 #endif	
+
+#ifdef OPENCL
+	if (layer->wt_context) {
+		free_weight_transform_context(layer->wt_context);
+	}
+#endif
 	
 	free(layer);
 	layer = NULL;
@@ -281,8 +297,10 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 #ifdef WINOGRAD_CONVOLUTION
 	if (3 == layer->filter_size) {
 		printf("transform weight matrix...");
-		transform_weight(F6x6_3x3, layer->weights, layer->filter_size, layer->input_size.c,
+#ifdef OPENCL
+		transform_weight(layer->wt_context, layer->weights, layer->filter_size, layer->input_size.c,
 			layer->nfilters, layer->transformed_weights);
+#endif
 		printf("done\n");
 	}
 #endif

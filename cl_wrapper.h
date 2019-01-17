@@ -24,6 +24,7 @@ cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, cl_
 cl_kernel cl_make_wrapper_kernel(cl_wrapper wrapper, cl_program program, const char *kername, cl_int *errcode);
 void cl_destroy_wrapper(cl_wrapper wrapper);
 void cl_get_platform_info(cl_wrapper wrapper, cl_platform_info param_name);
+void cl_print_device_info(cl_wrapper wrapper, cl_device_info param_name);
 
 #ifdef __cplusplus
 }

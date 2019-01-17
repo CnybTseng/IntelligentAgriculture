@@ -97,7 +97,31 @@ void cl_get_platform_info(cl_wrapper wrapper, cl_platform_info param_name)
 		clGetPlatformInfo(wrapper.platform, param_name, sizeof(extensions), extensions, NULL);
 		if (strlen(extensions) <= 1) printf("couldn't identify available OpenCL extensions\n");
 		else printf("%s\n", extensions);
+		printf("%s\n", extensions);
 	}	break;
+	default:
+		break;
+	}
+}
+
+void cl_print_device_info(cl_wrapper wrapper, cl_device_info param_name)
+{
+	switch (param_name) {
+	case CL_DEVICE_IMAGE3D_MAX_WIDTH: {
+		size_t image3d_max_width;
+		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_WIDTH, sizeof(size_t), &image3d_max_width, NULL);
+		printf("image3d_max_width: %d\n", image3d_max_width);
+	} 	break;
+	case CL_DEVICE_IMAGE3D_MAX_HEIGHT: {
+		size_t image3d_max_height;
+		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_HEIGHT, sizeof(size_t), &image3d_max_height, NULL);
+		printf("image3d_max_height: %d\n", image3d_max_height);
+	} 	break;
+	case CL_DEVICE_IMAGE3D_MAX_DEPTH: {
+		size_t image3d_max_depth;
+		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_DEPTH, sizeof(size_t), &image3d_max_depth, NULL);
+		printf("image3d_max_depth: %d\n", image3d_max_depth);
+	} 	break;
 	default:
 		break;
 	}

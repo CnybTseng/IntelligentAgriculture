@@ -233,6 +233,15 @@ void test_yolov3_tiny(int argc, char *argv[])
 		return;
 	}
 
+#ifdef OPENCL
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		return;
+	}
+#endif	
+	
 	void *layers[24];
 	int nlayers = sizeof(layers) / sizeof(layers[0]);
 	dim3 output_size;
@@ -334,6 +343,10 @@ void test_yolov3_tiny(int argc, char *argv[])
 	int N = 1;
 	if (argc > 3) N = atoi(argv[3]);
 	printf("inference iterations %d\n", N);
+
+#ifdef NNPACK	
+	znet_inference(net, standard);
+#endif	
 	
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
@@ -359,6 +372,9 @@ void test_yolov3_tiny(int argc, char *argv[])
 	delete_bmp(original);
 	free_image(standard);
 	znet_destroy(net);
+#ifdef OPENCL
+	cl_destroy_wrapper(wrapper);
+#endif
 }
 
 void test_im2col(int argc, char *argv[])
@@ -421,15 +437,12 @@ void test_gemm(int argc, char *argv[])
 		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
 	}
-	
-	cl_get_platform_info(wrapper, CL_PLATFORM_VERSION);
-	cl_get_platform_info(wrapper, CL_PLATFORM_EXTENSIONS);
 #endif	
 	
-	int ah = 16;
-	int aw = 16;
-	int bh = 16;
-	int bw = 16;
+	int ah = 1024;
+	int aw = 1024;
+	int bh = 1024;
+	int bw = 1024;
 	
 	float *A = (float *)malloc(aw * ah * sizeof(float));
 	if (!A) {

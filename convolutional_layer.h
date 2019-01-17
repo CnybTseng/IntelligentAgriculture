@@ -2,6 +2,7 @@
 #define _CONVOLUTIONAL_LAYER_H_
 
 #include "znet.h"
+#include "winograd_convolution.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -36,6 +37,9 @@ typedef struct {
 #ifdef NNPACK
 	size_t transformed_kernel_size;
 	float *transformed_kernel;
+#endif
+#ifdef OPENCL
+	weight_transform_context *wt_context;
 #endif
 } convolutional_layer;
 
