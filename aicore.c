@@ -43,13 +43,13 @@ static ai_core_param core_param;
 static Fifo *raw_image_queue = NULL;
 static Fifo *normalized_image_queue = NULL;
 static Fifo *output_image_queue = NULL;
-static char *image_input_queue_input_buffer = NULL;
-static char *image_input_queue_output_buffer = NULL;
-static char *image_output_queue_input_buffer = NULL;
-static char *image_output_queue_output_buffer = NULL;
+// static char *image_input_queue_input_buffer = NULL;
+// static char *image_input_queue_output_buffer = NULL;
+// static char *image_output_queue_input_buffer = NULL;
+// static char *image_output_queue_output_buffer = NULL;
 
 static void ai_core_init_routine();
-static void create_image_fifo();
+// static void create_image_fifo();
 static int create_image_enqueue_thread();
 static int create_image_process_thread();
 static int create_image_dequeue_thread();

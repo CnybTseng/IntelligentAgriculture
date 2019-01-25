@@ -4,11 +4,25 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <stdarg.h>
+#include <fcntl.h>
+#ifdef __linux__
+#	include <sys/ioctl.h>
+#	include <sys/mman.h>
+#	include <unistd.h>
+#	include <errno.h>
+#	include <linux/ion.h>
+#	include "msm_ion.h"
+#endif
 #include "cl_wrapper.h"
 
 static cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename, cl_int *errcode);
 static cl_program cl_create_program_from_binary(cl_device_id device, cl_context context, const char *filename, cl_int *errcode);
 static cl_int cl_save_binary_program(cl_device_id device, cl_program program, const char *filename);
+#ifdef __linux__
+static cl_ion_context cl_make_ion_buffer_internal(cl_wrapper wrapper, size_t size, unsigned int ion_allocation_flags,
+	cl_uint host_cache_policy);
+static cl_ion_context cl_make_ion_buffer(cl_wrapper wrapper, size_t size);
+#endif
 static void cl_host_mem_free(int n, ...);
 
 cl_wrapper cl_create_wrapper(cl_int *errcode)
@@ -37,7 +51,13 @@ cl_wrapper cl_create_wrapper(cl_int *errcode)
 	
 	wrapper.command_queue = clCreateCommandQueue(wrapper.context, wrapper.device, command_queue_properties, errcode);
 	if (!wrapper.command_queue || CL_SUCCESS != *errcode) return wrapper;
-	
+#ifdef __linux__	
+	wrapper.ion_device_fd = open("/dev/ion", O_RDONLY);
+	if (wrapper.ion_device_fd < 0) {
+		*errcode = errno;
+		return wrapper;
+	}
+#endif	
 	return wrapper;
 }
 
@@ -76,9 +96,12 @@ void cl_destroy_wrapper(cl_wrapper wrapper)
 {
 	clReleaseCommandQueue(wrapper.command_queue);
 	clReleaseContext(wrapper.context);
+#ifdef __linux__
+	close(wrapper.ion_device_fd);
+#endif
 }
 
-void cl_get_platform_info(cl_wrapper wrapper, cl_platform_info param_name)
+void cl_print_platform_info(cl_wrapper wrapper, cl_platform_info param_name)
 {
 	switch (param_name) {
 	case CL_PLATFORM_PROFILE:
@@ -126,6 +149,43 @@ void cl_print_device_info(cl_wrapper wrapper, cl_device_info param_name)
 		break;
 	}
 }
+
+#ifdef __linux__
+size_t cl_get_ion_image_row_pitch(cl_wrapper wrapper, cl_image_format image_format, cl_image_desc image_desc)
+{
+	size_t image_row_pitch = 0;
+	cl_int errcode = clGetDeviceImageInfoQCOM(wrapper.device, image_desc.image_width, image_desc.image_height,
+		&image_format, CL_IMAGE_ROW_PITCH, sizeof(size_t), &image_row_pitch, NULL);
+    if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clGetDeviceImageInfoQCOM fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		return 0;
+	}
+	
+	return image_row_pitch;
+}
+
+cl_ion_context cl_make_ion_buffer_for_nonplanar_image(cl_wrapper wrapper, cl_image_desc image_desc)
+{
+	cl_int errcode;
+	size_t padding_in_bytes = 0;
+	
+	errcode = clGetDeviceInfo(wrapper.device, CL_DEVICE_EXT_MEM_PADDING_IN_BYTES_QCOM, sizeof(size_t), &padding_in_bytes, NULL);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clGetDeviceImageInfoQCOM fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		exit(errcode);
+	}
+	
+	const size_t total_bytes = image_desc.image_row_pitch * image_desc.image_height + padding_in_bytes;
+    return cl_make_ion_buffer(wrapper, total_bytes);
+}
+
+void cl_free_ion_context(cl_wrapper wrapper, cl_ion_context ion_context)
+{
+	munmap(ion_context.ion_mem.ion_hostptr, ion_context.allocation_data.len);
+	close(ion_context.fd_data.fd);
+	ioctl(wrapper.ion_device_fd, ION_IOC_FREE, &ion_context.handle_data);
+}
+#endif
 
 cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename, cl_int *errcode)
 {		
@@ -284,6 +344,61 @@ cl_int cl_save_binary_program(cl_device_id device, cl_program program, const cha
 	
 	return CL_SUCCESS;
 }
+
+#ifdef __linux__
+cl_ion_context cl_make_ion_buffer_internal(cl_wrapper wrapper, size_t size, unsigned int ion_allocation_flags,
+	cl_uint host_cache_policy)
+{
+	cl_int  errcode;
+    cl_uint device_page_size;
+	cl_ion_context ion_context;
+
+    errcode = clGetDeviceInfo(wrapper.device, CL_DEVICE_PAGE_SIZE_QCOM, sizeof(device_page_size), &device_page_size, NULL);
+    if (errcode != CL_SUCCESS) {
+		fprintf(stderr, "CL_DEVICE_PAGE_SIZE_QCOM fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		exit(errcode);
+    }
+	
+    ion_context.allocation_data.len          = size;
+    ion_context.allocation_data.align        = device_page_size;
+    ion_context.allocation_data.heap_id_mask = ION_HEAP(ION_IOMMU_HEAP_ID);
+    ion_context.allocation_data.flags        = ion_allocation_flags;
+	int ret = ioctl(wrapper.ion_device_fd, ION_IOC_ALLOC, &ion_context.allocation_data);
+    if (ret) {
+		fprintf(stderr, "allocating ion memory fail:%d\n", errno);
+		exit(errno);
+    }
+
+    ion_context.handle_data.handle = ion_context.allocation_data.handle;
+    ion_context.fd_data.handle     = ion_context.allocation_data.handle;
+	ret = ioctl(wrapper.ion_device_fd, ION_IOC_MAP, &ion_context.fd_data);
+    if (ret) {
+        ioctl(wrapper.ion_device_fd, ION_IOC_FREE, &ion_context.handle_data);
+		fprintf(stderr, "mapping ion memory to cpu-addressable fd fail:%d.\n", errno);
+		exit(errno);
+    }
+
+    void *host_addr = mmap(NULL, ion_context.allocation_data.len, PROT_READ | PROT_WRITE, MAP_SHARED, ion_context.fd_data.fd, 0);
+    if (MAP_FAILED == host_addr) {
+        close(ion_context.fd_data.fd);
+        ioctl(wrapper.ion_device_fd, ION_IOC_FREE, &ion_context.handle_data);
+		fprintf(stderr, "mmapping fd to pointer fail:%d.\n", errno);
+		exit(errno);
+    }
+
+    ion_context.ion_mem.ext_host_ptr.allocation_type   = CL_MEM_ION_HOST_PTR_QCOM;
+    ion_context.ion_mem.ext_host_ptr.host_cache_policy = host_cache_policy;
+    ion_context.ion_mem.ion_filedesc                   = ion_context.fd_data.fd;
+    ion_context.ion_mem.ion_hostptr                    = host_addr;
+	
+	return ion_context;
+}
+
+cl_ion_context cl_make_ion_buffer(cl_wrapper wrapper, size_t size)
+{
+	return cl_make_ion_buffer_internal(wrapper, size, 0, CL_MEM_HOST_UNCACHED_QCOM);
+}
+#endif
 
 void cl_host_mem_free(int n, ...)
 {

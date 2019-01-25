@@ -1,3 +1,5 @@
+/** @name Single precision floating General Matrix Multiply. Not transpose matrix A and B.
+ ** @ { */
 __kernel void
 sgemm_nn_common(int m, int n, int k, float alpha, __global float *A, int lda,
                 __global float *B, int ldb, float beta, __global float *C, int ldc)
@@ -14,21 +16,6 @@ sgemm_nn_common(int m, int n, int k, float alpha, __global float *A, int lda,
 }
 
 __kernel void
-sgemm_nt_common(int m, int n, int k, float alpha, __global float *A, int lda,
-                __global float *B, int ldb, float beta, __global float *C, int ldc)
-{
-	const int global_col = get_global_id(0);
-	const int global_row = get_global_id(1);
-	
-	float sum = beta * C[global_row * ldc + global_col];
-	for (int l = 0; l < k; ++l) {
-		sum += alpha * A[global_row * lda + l] * B[global_col * ldb + l];
-	}
-	
-	C[global_row * ldc + global_col] = sum;
-}
-
-__kernel void
 sgemm_nn_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
              __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
@@ -37,7 +24,9 @@ sgemm_nn_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
 
 	enum {TILE_HEIGHT = 8};
 	float  a[TILE_HEIGHT];
+	// float4 a[TILE_HEIGHT];
 	float4 b;
+	// float4 b[4];
 	float4 c[TILE_HEIGHT];
 	
 	#pragma unroll
@@ -46,16 +35,23 @@ sgemm_nn_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
 	}
 	
 	for (int i = 0; i < k; ++i) {
+	// for (int i = 0; i < k; i += 4) {
 		#pragma unroll
 		for (int j = 0; j < TILE_HEIGHT; ++j) {
 			a[j] = A[((tile_row << 3) + j) * lda + i];
+			// a[j] = vload4(0, A + ((tile_row << 3) + j) * lda + i);
 		}
 		
 		b = vload4(0, B + i * ldb + (tile_col << 2));
+		// #pragma unroll
+		// for (int j = 0; j < 4; j++) {
+		// 	b[j] = vload4(0, B + (i + j) * ldb + (tile_col << 2));
+		// }
 		
 		#pragma unroll
 		for (int j = 0; j < TILE_HEIGHT; ++j) {
 			c[j] += alpha * a[j] * b;
+			// c[j] += alpha * (a[j].x * b[0] + a[j].y * b[1] + a[j].z * b[2] + a[j].w * b[3]);
 		}
 	}
 	
@@ -140,6 +136,98 @@ sgemm_nn_8x16(int m, int n, int k, float alpha, __global float *A, int lda,
 }
 
 __kernel void
+sgemm_nn_8x4_f4(const int m, const int n, const int k, const float alpha, __global const float *A, const int lda,
+                __read_only image2d_t B, const float beta, __global float *C, const int ldc)
+{
+	int gx = get_global_id(0);
+	int gy = get_global_id(1);
+	
+	float4 a[8];
+	float4 b[4];
+	float4 c[8];
+	
+	#pragma unroll
+	for (int i = 0; i < 8; i++) {
+		c[i] = beta * vload4(0, C + ((gy << 3) + i) * ldc + (gx << 2));
+	}
+	
+	for (int pos = 0; pos < k; pos += 4) {
+		#pragma unroll
+		for (int i = 0; i < 8; ++i) {
+			a[i] = vload4(0, A + ((gy << 3) + i) * lda + pos);
+		}
+		
+		#pragma unroll
+		for (int i = 0; i < 4; ++i) {
+			b[i] = read_imagef(B, (int2)(gx, pos + i));
+		}
+		
+		#pragma unroll
+		for (int i = 0; i < 8; ++i) {
+			c[i] += alpha * (a[i].x * b[0] + a[i].y * b[1] + a[i].z * b[2] + a[i].w * b[3]);
+		}
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 8; ++i) {
+		vstore4(c[i], 0, C + ((gy << 3) + i) * ldc + (gx << 2));
+	}
+}
+
+__kernel void
+sgemm_nn_desktop_gpu(int m, int n, int k, float alpha, __global float *A, int lda,
+                     __global float *B, int ldb, float beta, __global float *C, int ldc)
+{
+	const int local_row = get_local_id(0);
+	const int local_col = get_local_id(1);
+
+	enum {tile_size = 16};
+	__local float tile_A[tile_size][tile_size];
+	__local float tile_B[tile_size][tile_size];
+
+	const int global_row = get_group_id(0) * tile_size + local_row;
+	const int global_col = get_group_id(1) * tile_size + local_col;
+	
+	float acc = 0;
+	const int ntiles = k / tile_size;
+	for (int i = 0; i < ntiles; ++i) {
+		tile_A[local_row][local_col] = A[global_row * lda + i * tile_size + local_col];
+		tile_B[local_row][local_col] = B[(i * tile_size + local_row) * ldb + global_col];
+		
+		barrier(CLK_LOCAL_MEM_FENCE);
+		
+		#pragma unroll
+		for (int j = 0; j < tile_size; ++j) {
+			acc += alpha * tile_A[local_row][j] * tile_B[j][local_col];
+		}
+		
+		barrier(CLK_LOCAL_MEM_FENCE);
+	}
+	
+	float c = beta * C[global_row * ldc + global_col];
+	C[global_row * ldc + global_col] = acc + c;
+}
+
+/** @ }*/
+/** @name Single precision floating General Matrix Multiply.
+ ** @ { */
+
+__kernel void
+sgemm_nt_common(int m, int n, int k, float alpha, __global float *A, int lda,
+                __global float *B, int ldb, float beta, __global float *C, int ldc)
+{
+	const int global_col = get_global_id(0);
+	const int global_row = get_global_id(1);
+	
+	float sum = beta * C[global_row * ldc + global_col];
+	for (int l = 0; l < k; ++l) {
+		sum += alpha * A[global_row * lda + l] * B[global_col * ldb + l];
+	}
+	
+	C[global_row * ldc + global_col] = sum;
+}
+
+__kernel void
 sgemm_nt_1x4(int m, int n, int k, float alpha, __global float *A, int lda,
              __global float *B, int ldb, float beta, __global float *C, int ldc)
 {
@@ -220,96 +308,4 @@ sgemm_nt_8x4(int m, int n, int k, float alpha, __global float *A, int lda,
 	}
 }
 
-__kernel void
-sgemm_nn_desktop_gpu(int m, int n, int k, float alpha, __global float *A, int lda,
-                     __global float *B, int ldb, float beta, __global float *C, int ldc)
-{
-	const int local_row = get_local_id(0);
-	const int local_col = get_local_id(1);
-
-	enum {tile_size = 16};
-	__local float tile_A[tile_size][tile_size];
-	__local float tile_B[tile_size][tile_size];
-
-	const int global_row = get_group_id(0) * tile_size + local_row;
-	const int global_col = get_group_id(1) * tile_size + local_col;
-	
-	float acc = 0;
-	const int ntiles = k / tile_size;
-	for (int i = 0; i < ntiles; ++i) {
-		tile_A[local_row][local_col] = A[global_row * lda + i * tile_size + local_col];
-		tile_B[local_row][local_col] = B[(i * tile_size + local_row) * ldb + global_col];
-		
-		barrier(CLK_LOCAL_MEM_FENCE);
-		
-		#pragma unroll
-		for (int j = 0; j < tile_size; ++j) {
-			acc += alpha * tile_A[local_row][j] * tile_B[j][local_col];
-		}
-		
-		barrier(CLK_LOCAL_MEM_FENCE);
-	}
-	
-	float c = beta * C[global_row * ldc + global_col];
-	C[global_row * ldc + global_col] = acc + c;
-}
-
-__kernel void sgemm_mult_only(
-                           __global const float *A,
-                           const int lda,
-                           __global float *C,
-                           const int ldc,
-                           const int m,
-                           const int n,
-                           const int k,
-                           __read_only image2d_t Bi)
-{
-    int gx = get_global_id(0);
-    int gy = get_global_id(1);
-
-    if (((gx << 2) < n) && ((gy << 3) < m))
-    {
-        float4 a[8];
-        float4 b[4];
-        float4 c[8];
-
-        for (int i = 0; i < 8; i++)
-        {
-            c[i] = 0.0f;
-        }
-int A_y_off = (gy << 3) * lda;
-
-        for (int pos = 0; pos < k; pos += 4)
-        {
-            #pragma unroll
-            for (int i = 0; i < 4; i++)
-            {
-                b[i] = read_imagef(Bi, (int2)(gx, pos + i));
-            }
-
-            int A_off = A_y_off + pos;
-
-            #pragma unroll
-            for (int i = 0; i < 8; i++)
-            {
-                a[i] = vload4(0, A + A_off);
-                A_off += lda;
-            }
-
-            #pragma unroll
-            for (int i = 0; i < 8; i++)
-            {
-                c[i] += a[i].x * b[0] + a[i].y * b[1] + a[i].z * b[2] + a[i].w * b[3];
-            }
-
-        }
-
-        #pragma unroll
-        for (int i = 0; i < 8; i++)
-        {
-            int C_offs = ((gy << 3) + i) * ldc + (gx << 2);
-            vstore4(c[i], 0, C + C_offs);
-        }
-    }
-
-}
+/** @ }*/

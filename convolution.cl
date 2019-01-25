@@ -40,6 +40,16 @@ void chwn2nchw(__global float *chwn,
 	}
 }
 
+constant float4 a[8] = {
+	(float4)(     1,       0,       0, 0),
+	(float4)(-2/9.0,  -2/9.0,  -2/9.0, 0),
+	(float4)(-2/9.0,   2/9.0,  -2/9.0, 0),
+	(float4)(1/90.0,  1/45.0,  2/45.0, 0),
+	(float4)(1/90.0, -1/45.0,  2/45.0, 0),
+	(float4)(1/45.0,  1/90.0, 1/180.0, 0),
+	(float4)(1/45.0, -1/90.0, 1/180.0, 0),
+	(float4)(     0,       0,       1, 0)};
+
 /** @brief Weight matrix transformation for Winograd convolution F(6x6,3x3).
  ** @param weight weight tensor 3D-image.
  ** @param G transformation matrix.
@@ -53,22 +63,11 @@ void weight_transform_f6x6_3x3(__read_only image3d_t weight,
 	int gy = get_global_id(1);	// == 0
 	int gz = get_global_id(2);	// == [0,filter channel * number of filters)
 	
-	__local float4 a[8];
 	float4 b[4];
 	float4 c[8];
 	float4 d1, d2;
 	int pos = 0;
 	float zero = 0;
-	
-	// initialize 8x4 transformation matrix.	
-	a[0] = (float4)(     1,       0,       0, 0);
-	a[1] = (float4)(-2/9.0,  -2/9.0,  -2/9.0, 0);
-	a[2] = (float4)(-2/9.0,   2/9.0,  -2/9.0, 0);
-	a[3] = (float4)(1/90.0,  1/45.0,  2/45.0, 0);
-	a[4] = (float4)(1/90.0, -1/45.0,  2/45.0, 0);
-	a[5] = (float4)(1/45.0,  1/90.0, 1/180.0, 0);
-	a[6] = (float4)(1/45.0, -1/90.0, 1/180.0, 0);
-	a[7] = (float4)(     0,       0,       1, 0);
 	
 	// load 4x4 weight matrix.
 	#pragma unroll

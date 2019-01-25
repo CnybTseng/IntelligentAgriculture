@@ -157,6 +157,7 @@ void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh)
 	unsigned char *data = get_bmp_data(bmp);
 	int nchannels = bit_count >> 3;
 	node *n = detections->head;
+	int color[3] = {0, 255, 255};
 	while (n) {
 		detection *det = (detection *)n->val;
 		if (det->objectness < thresh) {
@@ -192,13 +193,13 @@ void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh)
 		
 		for (int c = 0; c < nchannels; ++c) {
 			for (int y = top; y < bottom; ++y) {
-				data[y * pitch + left * nchannels + c] = 255;
-				data[y * pitch + right * nchannels + c] = 255;
+				data[y * pitch + left * nchannels + c] = color[c];
+				data[y * pitch + right * nchannels + c] = color[c];
 			}
 			
 			for (int x = left; x < right; ++x) {
-				data[top * pitch + x * nchannels + c] = 255;
-				data[bottom * pitch + x * nchannels + c] = 255;
+				data[top * pitch + x * nchannels + c] = color[c];
+				data[bottom * pitch + x * nchannels + c] = color[c];
 			}
 		}
 		

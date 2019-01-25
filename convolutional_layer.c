@@ -1,5 +1,6 @@
 #include <omp.h>
 #include <math.h>
+#include <sys/time.h>
 #ifdef __INTEL_SSE__
 #	include <emmintrin.h>
 #	include <tmmintrin.h>
@@ -298,8 +299,12 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 	if (3 == layer->filter_size) {
 		printf("transform weight matrix...");
 #ifdef OPENCL
+		struct timeval t1, t2; 
+		gettimeofday(&t1, NULL);
 		transform_weight(layer->wt_context, layer->weights, layer->filter_size, layer->input_size.c,
 			layer->nfilters, layer->transformed_weights);
+		gettimeofday(&t2, NULL);
+		printf("%fms ", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
 #endif
 		printf("done\n");
 	}
