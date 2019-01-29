@@ -66,7 +66,6 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
 void gemm(int transa, int transb, int m, int n, int k, float alpha,
           float *A, int lda, float *B, int ldb, float beta, float *C, int ldc)
 {
-	// printf("[%dx%d]x[%dx%d]=[%dx%d]\n", m, k, k, n, m, n);
 #if !defined OPENCL
 	const int mn = m * n;
 #ifdef __ARM_NEON__
@@ -120,11 +119,14 @@ void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
 		}
 	}
 #else
+	static double total = 0;
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	gemm_nn_cl(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 	gettimeofday(&t2, NULL);
-	printf("gemm_nn: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
+	double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
+	total += duration;
+	printf("gemm_nn: %f ms, total %f ms.\n", duration, total);
 #endif
 }
 			 

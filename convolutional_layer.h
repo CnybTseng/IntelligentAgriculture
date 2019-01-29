@@ -40,6 +40,8 @@ typedef struct {
 #endif
 #ifdef OPENCL
 	weight_transform_context *wt_context;
+	input_transform_context *it_context;
+	winograd_convolution_context *wc_context;
 #endif
 } convolutional_layer;
 

@@ -43,3 +43,12 @@ G = G(:,1:3);
 A = A(1:6,:);
 g = g(1:3,1:3);
 Y2 = A*((G*g*G').*(B*d*B'))*A';
+
+output = rand(8,8,3);
+inverse_output_per_channel(:,:,1) = A*output(:,:,1)*A';
+inverse_output_per_channel(:,:,2) = A*output(:,:,2)*A';
+inverse_output_per_channel(:,:,3) = A*output(:,:,3)*A';
+inverse_output1 = sum(inverse_output_per_channel,3);
+
+sum_output = sum(output,3);
+inverse_output2 = A*sum_output*A';

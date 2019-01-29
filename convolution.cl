@@ -1,46 +1,6 @@
 #pragma OPENCL EXTENSION cl_khr_3d_image_writes : enable
 
-/** @brief Change data storing order from NCHW to CHWN.
- ** @param nchw input data stored in NCHW order.
- ** @param chwn output data stored in CHWN order.
- ** @param n batch size.
- ** @param c number of channels.
- ** @param h height of input tensor.
- ** @param w width of input tensor.
- **/
-__kernel
-void nchw2chwn(__global float *nchw,
-	__global float *chwn, int n, int c, int h, int w)
-{
-	int global_id = get_global_id(0);
-	int batch_id = global_id / (c * h * w);
-	if (batch_id < n) {
-		int chw = global_id - batch_id * c * h * w;
-		chwn[chw * n + batch_id] = nchw[global_id];
-	}
-}
-
-/** @brief Change data storing order from CHWN to NCHW.
- ** @param chwn input data stored in CHWN order.
- ** @param nchw output data stored in NCHW order.
- ** @param n batch size.
- ** @param c number of channels.
- ** @param h height of input tensor.
- ** @param w width of input tensor.
- **/
-__kernel
-void chwn2nchw(__global float *chwn,
-	__global float *nchw, int n, int c, int h, int w)
-{
-	int global_id = get_global_id(0);
-	int batch_id = global_id / (c * h * w);
-	if (batch_id < n) {
-		int chw = global_id - batch_id * c * h * w;
-		nchw[global_id] = chwn[chw * n + batch_id];
-	}
-}
-
-constant float4 a[8] = {
+constant float4 G[8] = {
 	(float4)(     1,       0,       0, 0),
 	(float4)(-2/9.0,  -2/9.0,  -2/9.0, 0),
 	(float4)(-2/9.0,   2/9.0,  -2/9.0, 0),
@@ -50,52 +10,114 @@ constant float4 a[8] = {
 	(float4)(1/45.0, -1/90.0, 1/180.0, 0),
 	(float4)(     0,       0,       1, 0)};
 
-/** @brief Weight matrix transformation for Winograd convolution F(6x6,3x3).
- ** @param weight weight tensor 3D-image.
- ** @param G transformation matrix.
- ** @param transformed_weight transfromed weight tensor 3D-image.
- **/
 __kernel
-void weight_transform_f6x6_3x3(__read_only image3d_t weight,
-	__write_only image3d_t transformed_weight)
+void weight_transform_f6x6_3x3(global const float *weight,
+	global float *transformed_weight, const int filter_channels, const int nfilters)
 {
-	int gx = get_global_id(0);	// == 0
-	int gy = get_global_id(1);	// == 0
-	int gz = get_global_id(2);	// == [0,filter channel * number of filters)
+	int gx = get_global_id(0);
 	
-	float4 b[4];
-	float4 c[8];
-	float4 d1, d2;
-	int pos = 0;
-	float zero = 0;
+	float4 g[3];
+	float4 Gg[8];
+	float4 GgGT;
 	
-	// load 4x4 weight matrix.
 	#pragma unroll
-	for (int i = 0; i < 4; ++i) {
-		b[i] = read_imagef(weight, (int4)(gx, gy + i, gz, 0));
+	for (int i = 0; i < 3; i++) {
+		g[i] = vload4(0, weight + 9 * gx + i * 3);
 	}
 	
-	// calculate 8x4 G*g.
 	#pragma unroll
-	for (int i = 0; i < 8; ++i) {
-		c[i].x = a[i].x * b[0].x + a[i].y * b[1].x + a[i].z * b[2].x + a[i].w * b[3].x;
-		c[i].y = a[i].x * b[0].y + a[i].y * b[1].y + a[i].z * b[2].y + a[i].w * b[3].y;
-		c[i].z = a[i].x * b[0].z + a[i].y * b[1].z + a[i].z * b[2].z + a[i].w * b[3].z;
-		c[i].w = a[i].x * b[0].w + a[i].y * b[1].w + a[i].z * b[2].w + a[i].w * b[3].w;
+	for (int i = 0; i < 8; i++) {
+		Gg[i].x = G[i].x * g[0].x + G[i].y * g[1].x + G[i].z * g[2].x;
+		Gg[i].y = G[i].x * g[0].y + G[i].y * g[1].y + G[i].z * g[2].y;
+		Gg[i].z = G[i].x * g[0].z + G[i].y * g[1].z + G[i].z * g[2].z;
 	}
 	
-	// calculate 8x8 G*g*Gt.
 	#pragma unroll
-	for (int i = 0; i < 8; ++i) {
-		d1.x = c[i].x * a[0].x + c[i].y * a[0].y + c[i].z * a[0].z + c[i].w * a[0].w;
-		d1.y = c[i].x * a[1].x + c[i].y * a[1].y + c[i].z * a[1].z + c[i].w * a[1].w;
-		d1.z = c[i].x * a[2].x + c[i].y * a[2].y + c[i].z * a[2].z + c[i].w * a[2].w;
-		d1.w = c[i].x * a[3].x + c[i].y * a[3].y + c[i].z * a[3].z + c[i].w * a[3].w;
-		write_imagef(transformed_weight, (int4)(gx, gy + i, gz, 0), d1);
-		d2.x = c[i].x * a[4].x + c[i].y * a[4].y + c[i].z * a[4].z + c[i].w * a[4].w;
-		d2.y = c[i].x * a[5].x + c[i].y * a[5].y + c[i].z * a[5].z + c[i].w * a[5].w;
-		d2.z = c[i].x * a[6].x + c[i].y * a[6].y + c[i].z * a[6].z + c[i].w * a[6].w;
-		d2.w = c[i].x * a[7].x + c[i].y * a[7].y + c[i].z * a[7].z + c[i].w * a[7].w;
-		write_imagef(transformed_weight, (int4)(gx + 1, gy + i, gz, 0), d2);
+	for (int i = 0; i < 8; i++) {
+		GgGT.x = Gg[i].x * G[0].x + Gg[i].y * G[0].y + Gg[i].z * G[0].z;
+		GgGT.y = Gg[i].x * G[1].x + Gg[i].y * G[1].y + Gg[i].z * G[1].z;
+		GgGT.z = Gg[i].x * G[2].x + Gg[i].y * G[2].y + Gg[i].z * G[2].z;
+		GgGT.w = Gg[i].x * G[3].x + Gg[i].y * G[3].y + Gg[i].z * G[3].z;
+		vstore4(GgGT, 0, transformed_weight + 64 * gx + i * 8);
+		GgGT.x = Gg[i].x * G[4].x + Gg[i].y * G[4].y + Gg[i].z * G[4].z;
+		GgGT.y = Gg[i].x * G[5].x + Gg[i].y * G[5].y + Gg[i].z * G[5].z;
+		GgGT.z = Gg[i].x * G[6].x + Gg[i].y * G[6].y + Gg[i].z * G[6].z;
+		GgGT.w = Gg[i].x * G[7].x + Gg[i].y * G[7].y + Gg[i].z * G[7].z;
+		vstore4(GgGT, 0, transformed_weight + 64 * gx + i * 8 + 4);
 	}
+}
+
+constant float4 BT[16] = {
+	(float4)(1,      0, -21/4.0,       0), (float4)( 21/4.0,       0, -1, 0),
+	(float4)(0,      1,       1, -17/4.0), (float4)(-17/4.0,       1,  1, 0),
+	(float4)(0,     -1,       1,  17/4.0), (float4)(-17/4.0,      -1,  1, 0),
+	(float4)(0,  1/2.0,   1/4.0,  -5/2.0), (float4)( -5/4.0,       2,  1, 0),
+	(float4)(0, -1/2.0,   1/4.0,   5/2.0), (float4)( -5/4.0,      -2,  1, 0),
+	(float4)(0,      2,       4,  -5/2.0), (float4)(     -5,   1/2.0,  1, 0),
+	(float4)(0,     -2,       4,   5/2.0), (float4)(     -5,  -1/2.0,  1, 0),
+	(float4)(0,     -1,       0,  21/4.0), (float4)(      0, -21/4.0,  0, 1)};
+
+constant float B2[64] = {
+	      1,       0,       0,      0,      0,      0,      0,       0,
+	      0,       1,      -1,  1/2.0, -1/2.0,      2,     -2,      -1,
+	-21/4.0,       1,       1,  1/4.0,  1/4.0,      4,      4,       0,
+	      0, -17/4.0,  17/4.0, -5/2.0,  5/2.0, -5/2.0,  5/2.0,  21/4.0,
+	 21/4.0, -17/4.0, -17/4.0, -5/4.0, -5/4.0,     -5,     -5,       0,
+	      0,       1,      -1,      2,     -2,  1/2.0, -1/2.0, -21/4.0,
+	     -1,       1,       1,      1,      1,      1,      1,       0,
+	      0,       0,       0,      0,      0,      0,      0,       1
+};
+
+constant float4 AT[12] = {
+	(float4)(1, 1,  1,  1), (float4)(  1, 32,  32, 0),
+	(float4)(0, 1, -1,  2), (float4)( -2, 16, -16, 0),
+	(float4)(0, 1,  1,  4), (float4)(  4,  8,   8, 0),
+	(float4)(0, 1, -1,  8), (float4)( -8,  4,  -4, 0),
+	(float4)(0, 1,  1, 16), (float4)( 16,  2,   2, 0),
+	(float4)(0, 1, -1, 32), (float4)(-32,  1,  -1, 1)};	
+
+__kernel
+void input_transform_f6x6_3x3(__read_only image3d_t input,
+	__write_only image2d_depth_t transformed_input)
+{
+	int gx = get_global_id(0);
+	int gy = get_global_id(1);
+	int gz = get_global_id(2);
+	
+	float4 d[16];
+	float4 BTd[16];
+	float4 BTdB[16];
+	
+	#pragma unroll
+	for (int i = 0; i < 8; i++) {
+		d[(i << 1)]     = read_imagef(input, (int4)( gx << 1,      (gy << 3) + i, gz, 1));
+		d[(i << 1) + 1] = read_imagef(input, (int4)((gx << 1) + 1, (gy << 3) + i, gz, 1));
+		BTd[(i << 1)] = 0.0f;
+		BTd[(i << 1) + 1] = 0.0f;
+		BTdB[(i << 1)] = 0.0f;
+		BTdB[(i << 1) + 1] = 0.0f;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 8; i++) {
+		for (int j = 0; j < 8; j++) {
+			BTd[(j << 1)]     += B2[(j << 3) + i] * d[(i << 1)];
+			BTd[(j << 1) + 1] += B2[(j << 3) + i] * d[(i << 1) + 1];
+		}
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 8; i++) {
+		write_imagef(transformed_input, (int2)( gx << 1,      (gy << 3) + i), gz), BTdB[(i << 1)]);
+		write_imagef(transformed_input, (int2)((gx << 1) + 1, (gy << 3) + i), gz), BTdB[(i << 1)]);
+	}
+}
+
+__kernel
+void winograd_convolution_f6x6_3x3(global const float *input,
+	global const float *transformed_weight, global float *output)
+{
+	int gx = get_global_id(0);
+	int gy = get_global_id(1);
+	
 }
