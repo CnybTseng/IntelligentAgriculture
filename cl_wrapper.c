@@ -15,8 +15,10 @@
 #endif
 #include "cl_wrapper.h"
 
-static cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename, cl_int *errcode);
-static cl_program cl_create_program_from_binary(cl_device_id device, cl_context context, const char *filename, cl_int *errcode);
+static cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename,
+	const char *options, cl_int *errcode);
+static cl_program cl_create_program_from_binary(cl_device_id device, cl_context context, const char *filename,
+	const char *options, cl_int *errcode);
 static cl_int cl_save_binary_program(cl_device_id device, cl_program program, const char *filename);
 #ifdef __linux__
 static cl_ion_context cl_make_ion_buffer_internal(cl_wrapper wrapper, size_t size, unsigned int ion_allocation_flags,
@@ -71,15 +73,15 @@ cl_command_queue cl_get_wrapper_command_queue(cl_wrapper wrapper)
 	return wrapper.command_queue;
 }
 
-cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, cl_int *errcode)
+cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, const char *options, cl_int *errcode)
 {
 	char binary_filename[1024];
 	strcpy(binary_filename, filename);
 	strcat(binary_filename, ".bin");
-	
-	cl_program program = cl_create_program_from_binary(wrapper.device, wrapper.context, binary_filename, errcode);
+
+	cl_program program = cl_create_program_from_binary(wrapper.device, wrapper.context, binary_filename, options, errcode);
 	if (!program) {
-		program = cl_create_program_with_source(wrapper.device, wrapper.context, filename, errcode);
+		program = cl_create_program_with_source(wrapper.device, wrapper.context, filename, options, errcode);
 		if (!program) return program;
 		*errcode = cl_save_binary_program(wrapper.device, program, binary_filename);
 	}
@@ -130,6 +132,16 @@ void cl_print_platform_info(cl_wrapper wrapper, cl_platform_info param_name)
 void cl_print_device_info(cl_wrapper wrapper, cl_device_info param_name)
 {
 	switch (param_name) {
+	case CL_DEVICE_IMAGE2D_MAX_WIDTH: {
+		size_t image2d_max_width;
+		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE2D_MAX_WIDTH, sizeof(size_t), &image2d_max_width, NULL);
+		printf("image2d_max_width: %d\n", image2d_max_width);
+	}	break;
+	case CL_DEVICE_IMAGE2D_MAX_HEIGHT: {
+		size_t image2d_max_height;
+		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE2D_MAX_HEIGHT, sizeof(size_t), &image2d_max_height, NULL);
+		printf("image2d_max_height: %d\n", image2d_max_height);
+	}	break;
 	case CL_DEVICE_IMAGE3D_MAX_WIDTH: {
 		size_t image3d_max_width;
 		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_WIDTH, sizeof(size_t), &image3d_max_width, NULL);
@@ -187,7 +199,8 @@ void cl_free_ion_context(cl_wrapper wrapper, cl_ion_context ion_context)
 }
 #endif
 
-cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename, cl_int *errcode)
+cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename,
+	const char *options, cl_int *errcode)
 {		
 	struct stat stbuf;
 	int ret = stat(filename, &stbuf);
@@ -217,7 +230,6 @@ cl_program cl_create_program_with_source(cl_device_id device, cl_context context
 	
 	if (!program || CL_SUCCESS != *errcode) return program;
 	
-	const char options[] = "-cl-fast-relaxed-math";
 	*errcode = clBuildProgram(program, 1, &device, options, NULL, NULL);
 	if (CL_SUCCESS != *errcode) {
 		char buildinfo[16384];
@@ -229,7 +241,8 @@ cl_program cl_create_program_with_source(cl_device_id device, cl_context context
 	return program;
 }
 
-cl_program cl_create_program_from_binary(cl_device_id device, cl_context context, const char *filename, cl_int *errcode)
+cl_program cl_create_program_from_binary(cl_device_id device, cl_context context, const char *filename,
+	const char *options, cl_int *errcode)
 {	
 	struct stat stbuf;
 	int ret = stat(filename, &stbuf);
@@ -262,7 +275,6 @@ cl_program cl_create_program_from_binary(cl_device_id device, cl_context context
 	
 	if (!program || CL_SUCCESS != *errcode) return program;
 	
-	const char options[] = "-cl-fast-relaxed-math";
 	*errcode = clBuildProgram(program, 1, &device, options, NULL, NULL);
 	if (CL_SUCCESS != *errcode) {
 		char buildinfo[16384];

@@ -182,7 +182,8 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {	
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
+	char options[] = "-cl-fast-relaxed-math";
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -337,7 +338,8 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {	
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
+	char options[] = "-cl-fast-relaxed-math";
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -470,7 +472,8 @@ void gemm_nn_cl_v1(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {	
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
+	char options[] = "-cl-fast-relaxed-math";
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -606,7 +609,8 @@ void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
+	char options[] = "-cl-fast-relaxed-math";
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -750,7 +754,8 @@ void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
+	char options[] = "-cl-fast-relaxed-math";
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -939,7 +944,8 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", &errcode);
+	char options[] = "-cl-fast-relaxed-math";
+	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;

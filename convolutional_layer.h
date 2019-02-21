@@ -35,13 +35,9 @@ typedef struct {
 	float *vecmat;
 	float *output;
 #ifdef NNPACK
+	enum nnp_convolution_algorithm algorithm;
 	size_t transformed_kernel_size;
 	float *transformed_kernel;
-#endif
-#ifdef OPENCL
-	weight_transform_context *wt_context;
-	input_transform_context *it_context;
-	winograd_convolution_context *wc_context;
 #endif
 } convolutional_layer;
 

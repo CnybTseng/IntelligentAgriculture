@@ -123,4 +123,4 @@ info:
 	
 .PHONY:clean
 clean:
-	$(RM) $(ALLOBJS) $(EXEC) $(SLIB) $(ALIB)
+	$(RM) $(ALLOBJS) $(EXEC) $(SLIB) $(ALIB) *.cl.bin

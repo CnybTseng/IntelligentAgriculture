@@ -36,7 +36,7 @@ typedef struct {
 #endif
 
 cl_wrapper cl_create_wrapper(cl_int *errcode);
-cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, cl_int *errcode);
+cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, const char *options, cl_int *errcode);
 cl_kernel cl_make_wrapper_kernel(cl_wrapper wrapper, cl_program program, const char *kername, cl_int *errcode);
 void cl_destroy_wrapper(cl_wrapper wrapper);
 void cl_print_platform_info(cl_wrapper wrapper, cl_platform_info param_name);

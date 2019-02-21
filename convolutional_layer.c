@@ -65,13 +65,9 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->vecmat = NULL;
 	layer->output = NULL;
 #ifdef NNPACK
+	layer->algorithm = nnp_convolution_algorithm_wt8x8_fp16;
 	layer->transformed_kernel_size = 0;
 	layer->transformed_kernel = NULL;
-#endif
-#ifdef OPENCL
-	layer->wt_context = NULL;
-	layer->it_context = NULL;
-	layer->wc_context = NULL;
 #endif
 	
 	if (output_size) {
@@ -126,29 +122,9 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
 	if (!layer->output) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
-		goto cleanup;
+		cleanup:free_convolution_layer(layer);
+		return 0;
 	}
-	
-#ifdef OPENCL
-	if (3 == filter_size) {
-		layer->wt_context = create_weight_transform_context(F6x6_3x3);
-		if (!layer->wt_context) {
-			goto cleanup;
-		}
-		
-		layer->it_context = create_input_transform_context(input_size.w, input_size.h, input_size.c, stride, padding);
-		if (!layer->it_context) {
-			goto cleanup;
-		}
-		
-		layer->wc_context = create_winograd_convolution_context(F6x6_3x3, input_size.w, input_size.h, input_size.c,
-			stride, padding, nfilters);
-		if (!layer->wc_context) {
-			cleanup:free_convolution_layer(layer);
-			return 0;
-		}
-	}
-#endif	
 	
 	return (void *)layer;
 }
@@ -204,20 +180,6 @@ void free_convolution_layer(void *_layer)
 		layer->transformed_kernel = NULL;
 	}
 #endif	
-
-#ifdef OPENCL
-	if (3 == layer->filter_size && layer->wt_context) {
-		free_weight_transform_context(layer->wt_context);
-	}
-	
-	if (3 == layer->filter_size && layer->it_context) {
-		free_input_transform_context(layer->it_context);
-	}
-	
-	if (3 == layer->filter_size && layer->wc_context) {
-		free_winograd_convolution_context(layer->wc_context);
-	}
-#endif
 	
 	free(layer);
 	layer = NULL;
@@ -292,20 +254,6 @@ void forward_convolutional_layer(void *_layer, znet *net)
 		
 		gemm(0, 0, m, n, k, 1, A, k, B, n, 1, C, n);
 	}
-	
-#ifdef WINOGRAD_CONVOLUTION
-	if (3 == layer->filter_size) {
-		printf("transform input image...");
-#ifdef OPENCL
-		struct timeval t1, t2; 
-		gettimeofday(&t1, NULL);
-		transform_input(layer->it_context, layer->input);
-		gettimeofday(&t2, NULL);
-		printf("%fms ", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
-#endif
-		printf("done\n");
-	}
-#endif	
 
 #ifndef MERGE_BATCHNORM_TO_CONV	
 	if (layer->batch_norm) {
@@ -337,21 +285,6 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 	fread(layer->weights, sizeof(float), layer->nweights, fp);
 #ifdef MERGE_BATCHNORM_TO_CONV
 	if (layer->batch_norm) merge_batchnorm_params(layer);
-#endif
-
-#ifdef WINOGRAD_CONVOLUTION
-	if (3 == layer->filter_size) {
-		printf("transform weight matrix...");
-#ifdef OPENCL
-		struct timeval t1, t2; 
-		gettimeofday(&t1, NULL);
-		transform_weight(layer->wt_context, layer->weights, layer->filter_size, layer->input_size.c,
-			layer->nfilters, layer->transformed_weights);
-		gettimeofday(&t2, NULL);
-		printf("%fms ", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
-#endif
-		printf("done\n");
-	}
 #endif
 }
 
@@ -444,7 +377,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 
 	if (3 != layer->filter_size) {
 		nnp_convolution_inference(
-			nnp_convolution_algorithm_auto,
+			nnp_convolution_algorithm_direct,
 			nnp_convolution_transform_strategy_tuple_based,
 			layer->input_size.c,
 			layer->nfilters,
@@ -466,7 +399,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 	} else {
 		if (NULL == layer->transformed_kernel) {
 			nnp_convolution_inference(
-				nnp_convolution_algorithm_auto,
+				layer->algorithm,
 				nnp_convolution_transform_strategy_precompute,
 				layer->input_size.c,
 				layer->nfilters,
@@ -489,7 +422,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			layer->transformed_kernel = calloc(layer->transformed_kernel_size, 1);
 			
 			nnp_convolution_inference(
-				nnp_convolution_algorithm_auto,
+				layer->algorithm,
 				nnp_convolution_transform_strategy_precompute,
 				layer->input_size.c,
 				layer->nfilters,
@@ -510,8 +443,11 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			);
 		}
 		
+		static double total = 0;
+		struct timeval t1, t2; 
+		gettimeofday(&t1, NULL);
 		nnp_convolution_inference(
-			nnp_convolution_algorithm_auto,
+			layer->algorithm,
 			nnp_convolution_transform_strategy_reuse,
 			layer->input_size.c,
 			layer->nfilters,
@@ -530,6 +466,10 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			znet_threadpool(net),
 			NULL
 		);
+		gettimeofday(&t2, NULL);
+		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
+		total += duration;
+		printf("nnp_convolution_inference: %f ms, total %f ms.\n", duration, total);
 	}
 
 #ifndef MERGE_BATCHNORM_TO_CONV	
