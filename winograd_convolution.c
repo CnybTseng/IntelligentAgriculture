@@ -124,28 +124,14 @@ struct output_inverse_transform_context {
 };
 #endif
 
-int get_transformed_weight_matrix_size(WINOGRAD_CONV_TYPE conv)
+int get_image_tile_size(WINOGRAD_CONV_TYPE conv)
 {
-	int filter_size;
-	int conv_tile_output_size;
-	if (conv == F6x6_3x3) {
-		filter_size = 3;
-		conv_tile_output_size = 6;
-	} else if (conv == F4x4_3x3) {
-		filter_size = 3;
-		conv_tile_output_size = 4;
-	} else if (conv == F2x2_3x3) {
-		filter_size = 3;
-		conv_tile_output_size = 2;
-	} else {
-		fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
-		return 0;
-	}
-	
-	return filter_size + conv_tile_output_size - 1;
+	const int filter_size = 3;
+	int tile_output_size = get_tile_output_size(conv);	
+	return filter_size + tile_output_size - 1;
 }
 
-int get_convolution_tile_output_size(WINOGRAD_CONV_TYPE conv)
+int get_tile_output_size(WINOGRAD_CONV_TYPE conv)
 {
 	if (conv == F6x6_3x3) {
 		return 6;
@@ -181,7 +167,19 @@ weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE con
 		goto cleanup;
 	}
 	
-	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "weight_transform_f6x6_3x3", &errcode);
+	if (conv == F6x6_3x3) {
+		context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "weight_transform_f6x6_3x3", &errcode);
+	} else if (conv == F4x4_3x3) {
+		fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	} else if (conv == F2x2_3x3) {
+		fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	} else {
+		fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
@@ -206,7 +204,7 @@ weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE con
 		goto cleanup;
 	}
 	
-	context->transf_weight_size = get_transformed_weight_matrix_size(conv);
+	context->transf_weight_size = get_image_tile_size(conv);
 	context->transformed_weight_width = ((filter_channels + 3) / 4) * 4;
 	context->transformed_weight_height = ((nfilters + 3) / 4) * 4;
 	context->transformed_weight_depth = context->transf_weight_size * context->transf_weight_size;
@@ -320,7 +318,7 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 		goto cleanup;
 	}
 	
-	const int input_size = get_transformed_weight_matrix_size(conv);	
+	const int input_size = get_image_tile_size(conv);	
 	context->d_BT = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
 		input_size * input_size * sizeof(float), NULL, &errcode);
 	if (CL_SUCCESS != errcode) {
@@ -349,7 +347,7 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 		.image_channel_data_type = CL_FLOAT
 	};
 	
-	const int output_size = get_convolution_tile_output_size(conv);
+	const int output_size = get_tile_output_size(conv);
 	context->ntilesX = (input_width + (output_size - 1)) / output_size;
 	context->ntilesY = (input_height + (output_size - 1)) / output_size;
 	cl_image_desc input_image_desc;
@@ -517,7 +515,7 @@ matrix_multiplication_context *create_matrix_multiplication_context(WINOGRAD_CON
 		goto cleanup;
 	}
 	
-	const int tile_input_size = get_transformed_weight_matrix_size(conv);
+	const int tile_input_size = get_image_tile_size(conv);
 	context->d_output = clCreateBuffer(wrapper.context, CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR,
 		wtc->transformed_weight_height * itc->transformed_input_image_width * tile_input_size * tile_input_size *
 		sizeof(float), NULL, &errcode);
@@ -607,7 +605,7 @@ output_inverse_transform_context *create_output_inverse_transform_context(WINOGR
 		goto cleanup;
 	}
 	
-	const int input_size = get_transformed_weight_matrix_size(conv);	
+	const int input_size = get_image_tile_size(conv);	
 	context->d_AT = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
 		input_size * input_size * sizeof(float), NULL, &errcode);
 	if (CL_SUCCESS != errcode) {
@@ -620,7 +618,7 @@ output_inverse_transform_context *create_output_inverse_transform_context(WINOGR
 	memcpy(h_AT, AT_f6x6_3x3, input_size * input_size * sizeof(float));
 	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_AT, h_AT, 0, NULL, NULL);
 	
-	context->tile_output_size = get_convolution_tile_output_size(conv);
+	context->tile_output_size = get_tile_output_size(conv);
 	context->d_inverse_transformed_output = clCreateBuffer(wrapper.context, CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR,
 		 mmc->wtc->nfilters * (mmc->itc->ntilesX * mmc->itc->ntilesY) * (context->tile_output_size *
 		 context->tile_output_size) * sizeof(float), NULL, &errcode);

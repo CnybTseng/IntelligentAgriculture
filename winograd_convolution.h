@@ -24,8 +24,8 @@ struct output_inverse_transform_context;
 typedef struct output_inverse_transform_context output_inverse_transform_context;
 #endif
 
-int get_transformed_weight_matrix_size(WINOGRAD_CONV_TYPE conv);
-int get_convolution_tile_output_size(WINOGRAD_CONV_TYPE conv);
+int get_image_tile_size(WINOGRAD_CONV_TYPE conv);
+int get_tile_output_size(WINOGRAD_CONV_TYPE conv);
 #ifdef OPENCL
 weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE conv, int filter_channels,
 	int nfilters);

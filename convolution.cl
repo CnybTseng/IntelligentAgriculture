@@ -70,7 +70,6 @@ void input_transform_f6x6_3x3(__read_only image2d_t input, const int height_per_
 	float4 BTd[16];
 	float4 BTdB;
 	
-	const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;
 	const int slice_pitch = (((get_global_size(0) * get_global_size(1) + 3) / 4) * 4) * (((get_global_size(2) + 3) / 4) * 4);
 	const int xy = gz * (((get_global_size(0) * get_global_size(1) + 3) / 4) * 4) + gy * get_global_size(0) + gx;
 	

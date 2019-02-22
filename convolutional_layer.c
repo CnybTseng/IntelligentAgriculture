@@ -81,8 +81,8 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	}
 	
 	if (3 == filter_size) {
-		const int tran_size = get_transformed_weight_matrix_size(F6x6_3x3);
-		layer->transformed_weights = calloc(tran_size * tran_size * input_size.c * nfilters, sizeof(float));
+		const int transformed_size = get_image_tile_size(F6x6_3x3);
+		layer->transformed_weights = calloc(transformed_size * transformed_size * input_size.c * nfilters, sizeof(float));
 		if (!layer->transformed_weights) {
 			fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 			goto cleanup;

@@ -76,11 +76,11 @@ void test_activate_neon(int argc, char *argv[]);
 void test_nnpack(int argc, char *argv[]);
 void test_winograd_weight_transformation(int argc, char *argv[]);
 void test_winograd_input_transformation(int argc, char *argv[]);
-void test_winograd_weight_input_multiply(int argc, char *argv[]);
+void test_winograd_convolution(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_winograd_weight_input_multiply(argc, argv);
+	test_winograd_convolution(argc, argv);
 	
 	return 0;
 }
@@ -1516,7 +1516,7 @@ void test_winograd_input_transformation(int argc, char *argv[])
 #endif	
 }
 
-void test_winograd_weight_input_multiply(int argc, char *argv[])
+void test_winograd_convolution(int argc, char *argv[])
 {
 #ifdef OPENCL
 	cl_int errcode;
@@ -1539,7 +1539,7 @@ void test_winograd_weight_input_multiply(int argc, char *argv[])
 	}
 	
 	float total_duration[3] = {0, 0, 0};
-	for (int g = 0;  g < 9; ++g) {
+	for (int g = 0;  g < 1; ++g) {
 		float *transformed_weights = NULL;
 		float *transformed_input = NULL;
 		float *output = NULL;
@@ -1570,7 +1570,7 @@ void test_winograd_weight_input_multiply(int argc, char *argv[])
 
 		weight_transform_context *wtc = create_weight_transform_context(F6x6_3x3, filter_channels, nfilters);
 		
-		const int tile_input_size = get_transformed_weight_matrix_size(F6x6_3x3);
+		const int tile_input_size = get_image_tile_size(F6x6_3x3);
 		const int round_filter_channels = ((filter_channels + 3) / 4) * 4;
 		const int round_num_filters = ((nfilters + 3) / 4) * 4;
 		
@@ -1624,7 +1624,7 @@ void test_winograd_weight_input_multiply(int argc, char *argv[])
 		}
 		
 		output_inverse_transform_context *oitc = create_output_inverse_transform_context(F6x6_3x3, mmc);
-		const int tile_output_size = get_convolution_tile_output_size(F6x6_3x3);
+		const int tile_output_size = get_tile_output_size(F6x6_3x3);
 		const int ntilesX = (input_width + (tile_output_size - 1)) / tile_output_size;
 		const int ntilesY = (input_height + (tile_output_size - 1)) / tile_output_size;
 		if (save_result) {
