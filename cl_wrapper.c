@@ -120,9 +120,8 @@ void cl_print_platform_info(cl_wrapper wrapper, cl_platform_info param_name)
 	case CL_PLATFORM_EXTENSIONS: {
 		char extensions[1024] = {'\0'};
 		clGetPlatformInfo(wrapper.platform, param_name, sizeof(extensions), extensions, NULL);
-		if (strlen(extensions) <= 1) printf("couldn't identify available OpenCL extensions\n");
-		else printf("%s\n", extensions);
-		printf("%s\n", extensions);
+		if (strlen(extensions) <= 1) printf("couldn't identify available OpenCL platform extensions\n");
+		else printf("platform extensions: %s\n", extensions);
 	}	break;
 	default:
 		break;
@@ -157,6 +156,12 @@ void cl_print_device_info(cl_wrapper wrapper, cl_device_info param_name)
 		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_DEPTH, sizeof(size_t), &image3d_max_depth, NULL);
 		printf("image3d_max_depth: %d\n", image3d_max_depth);
 	} 	break;
+	case CL_DEVICE_EXTENSIONS: {
+		char extensions[1024] = {'\0'};
+		clGetDeviceInfo(wrapper.device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
+		if (strlen(extensions) <= 1) printf("couldn't identify available OpenCL device extensions\n");
+		else printf("device extensions: %s\n", extensions);
+	}	break;
 	default:
 		break;
 	}
@@ -215,7 +220,7 @@ cl_program cl_create_program_with_source(cl_device_id device, cl_context context
 		return 0;
 	}
 	
-	FILE *fp = fopen(filename, "r");
+	FILE *fp = fopen(filename, "rb");
 	if (!fp) {
 		fprintf(stderr, "fopen[%s:%d].\n", __FILE__, __LINE__);
 		free(strings);

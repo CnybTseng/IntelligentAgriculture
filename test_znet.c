@@ -1417,6 +1417,11 @@ void test_nnpack(int argc, char *argv[])
 void test_winograd_weight_transformation(int argc, char *argv[])
 {
 #ifdef OPENCL
+	int save_result = 0;
+	if (argc > 2) {
+		save_result = atoi(argv[2]);
+	}
+	
 	cl_int errcode;
 	wrapper = cl_create_wrapper(&errcode);
 	if (CL_SUCCESS != errcode) {
@@ -1427,19 +1432,29 @@ void test_winograd_weight_transformation(int argc, char *argv[])
 	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_WIDTH);
 	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_HEIGHT);
 	
-	const int filter_channels = 256;
-	const int nfilters = 512;
-	float *weights = calloc(3 * 3 * filter_channels * nfilters, sizeof(float));
+	const int filter_size = 3;
+	const int filter_channels = 512;
+	const int nfilters = 1024;
+	float *weights = calloc(filter_size * filter_size * filter_channels * nfilters, sizeof(float));
 	srand(time(NULL));
-	for (int i = 0; i < 3 * 3 * filter_channels * nfilters; ++i) {
+	for (int i = 0; i < filter_size * filter_size * filter_channels * nfilters; ++i) {
 		weights[i] = rand() / (double)RAND_MAX;
 	}
 	
-	weight_transform_context *context = create_weight_transform_context(F6x6_3x3, filter_channels, nfilters);
+	float *biases = calloc(nfilters, sizeof(float));
+	srand(time(NULL));
+	for (int i = 0; i < nfilters; ++i) {
+		biases[i] = rand() / (double)RAND_MAX;
+	}
 	
-	const int round_filter_channels = ((filter_channels + 3) / 4) * 4;
-	const int round_num_filters = ((nfilters + 3) / 4) * 4;
-	float *transformed_weights = calloc(8 * 8 * round_filter_channels * round_num_filters, sizeof(float));
+	weight_transform_context *context = create_weight_transform_context(F4x4_3x3, filter_channels, nfilters);
+	
+	int transformed_weight_image_width, transformed_weight_image_height;
+	float *transformed_weights = NULL;
+	if (save_result) {
+		get_transformed_weight_image_size(context, &transformed_weight_image_width, &transformed_weight_image_height);
+		transformed_weights = calloc((transformed_weight_image_width << 2) * transformed_weight_image_height, sizeof(float));
+	}
 	
 	int N = 1;
 	if (argc > 1) N = atoi(argv[1]);
@@ -1447,19 +1462,21 @@ void test_winograd_weight_transformation(int argc, char *argv[])
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-		transform_weight(context, weights, transformed_weights);
+		transform_weight(context, weights, biases, transformed_weights);
 	}
 	gettimeofday(&t2, NULL);
 	printf("transform_weight: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
 	
 	free_weight_transform_context(context);
 	
-	save_volume(weights, 3, 3, filter_channels * nfilters, "weights.txt");
-	// save_volume(transformed_weights, 8, 8, filter_channels * nfilters, "transformed_weights.txt");
-	save_volume(transformed_weights, round_filter_channels, round_num_filters, 64, "transformed_weights.txt");
+	if (save_result) {
+		save_volume(weights, 3, 3, filter_channels * nfilters, "weights.txt");
+		save_volume(transformed_weights, transformed_weight_image_width << 2, transformed_weight_image_height, 1, "transformed_weights.txt");
+		free(transformed_weights);
+	}
 	
 	free(weights);
-	free(transformed_weights);
+	free(biases);
 	
 	cl_destroy_wrapper(wrapper);
 #endif
@@ -1478,9 +1495,9 @@ void test_winograd_input_transformation(int argc, char *argv[])
 	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_WIDTH);
 	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_HEIGHT);
 
-	const int input_width = 104;
-	const int input_height = 104;
-	const int input_channels = 32;
+	const int input_width = 13;
+	const int input_height = 13;
+	const int input_channels = 512;
 	const int stride = 1;
 	const int padding = 1;
 	
@@ -1490,12 +1507,14 @@ void test_winograd_input_transformation(int argc, char *argv[])
 		input[i] = rand() / (double)RAND_MAX;
 	}
 	
-	input_transform_context *context = create_input_transform_context(F6x6_3x3, input_width, input_height,
+	save_volume(input, input_width, input_height, input_channels, "input.txt");
+	
+	input_transform_context *context = create_input_transform_context(F4x4_3x3, input_width, input_height,
 		input_channels, stride, padding);
 	
-	int transformed_input_width, transformed_input_height, array_size;
-	get_transformed_input_size(context, &transformed_input_width, &transformed_input_height, &array_size);
-	float *transformed_input = calloc(transformed_input_width * transformed_input_height * array_size, sizeof(float));
+	int transformed_input_width, transformed_input_height;
+	get_transformed_input_image_size(context, &transformed_input_width, &transformed_input_height);
+	float *transformed_input = calloc((transformed_input_width << 2) * transformed_input_height, sizeof(float));
 	
 	int N = 1;
 	if (argc > 1) N = atoi(argv[1]);
@@ -1507,6 +1526,8 @@ void test_winograd_input_transformation(int argc, char *argv[])
 	}
 	gettimeofday(&t2, NULL);
 	printf("transform_input: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
+	
+	save_volume(transformed_input, transformed_input_width << 2, transformed_input_height, 1, "transformed_input.txt");
 	
 	free_input_transform_context(context);
 	free(input);
@@ -1528,18 +1549,18 @@ void test_winograd_convolution(int argc, char *argv[])
 	
 	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_WIDTH);
 	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_HEIGHT);
+	cl_print_device_info(wrapper, CL_DEVICE_EXTENSIONS);
 
 	int filter_channels_test_group[] = {  3,  16,  32,  64, 128, 256,  512, 256, 384};
 	int nfilters_test_group[] =        { 16,  32,  64, 128, 256, 512, 1024, 512, 256};
 	int input_size_test_group[] =      {416, 208, 104,  52,  26,  13,   13,  13,  26};
 	
 	int save_result = 0;
-	if (argc > 1) {
+	if (argc > 1)
 		save_result = atoi(argv[1]);
-	}
 	
 	float total_duration[3] = {0, 0, 0};
-	for (int g = 0;  g < 1; ++g) {
+	for (int g = 0;  g < 9; ++g) {
 		float *transformed_weights = NULL;
 		float *transformed_input = NULL;
 		float *output = NULL;
@@ -1547,11 +1568,16 @@ void test_winograd_convolution(int argc, char *argv[])
 		
 		const int filter_channels = filter_channels_test_group[g];
 		const int nfilters = nfilters_test_group[g];
+		
 		float *weights = calloc(3 * 3 * filter_channels * nfilters, sizeof(float));
 		srand(time(NULL));
-		for (int i = 0; i < 3 * 3 * filter_channels * nfilters; ++i) {
+		for (int i = 0; i < 3 * 3 * filter_channels * nfilters; ++i)
 			weights[i] = rand() / (double)RAND_MAX;
-		}
+		
+		float *biases = calloc(nfilters, sizeof(float));
+		srand(time(NULL));
+		for (int i = 0; i < nfilters; ++i)
+			biases[i] = rand() / (double)RAND_MAX;
 		
 		const int input_width = input_size_test_group[g];
 		const int input_height = input_size_test_group[g];
@@ -1561,96 +1587,111 @@ void test_winograd_convolution(int argc, char *argv[])
 		
 		float *input = calloc(input_width * input_height * input_channels, sizeof(float));
 		srand(time(NULL));
-		for (int i = 0; i < input_width * input_height * input_channels; ++i) {
-			input[i] = rand() / (double)RAND_MAX;
-		}
+		for (int i = 0; i < input_width * input_height * input_channels; ++i)
+			input[i] = 0.1f * (rand() / (double)RAND_MAX - 0.5f);
 				
-		printf("test configuration: input size %d, filter channels %d, number of filters %d\n", input_size_test_group[g],
+		printf("\ntest configuration: input size %d, filter channels %d, number of filters %d\n", input_size_test_group[g],
 			filter_channels_test_group[g], nfilters_test_group[g]);
 
-		weight_transform_context *wtc = create_weight_transform_context(F6x6_3x3, filter_channels, nfilters);
+		weight_transform_context *wtc = create_weight_transform_context(F4x4_3x3, filter_channels, nfilters);
 		
-		const int tile_input_size = get_image_tile_size(F6x6_3x3);
-		const int round_filter_channels = ((filter_channels + 3) / 4) * 4;
-		const int round_num_filters = ((nfilters + 3) / 4) * 4;
-		
+		int transformed_weight_image_width, transformed_weight_image_height;
 		if (save_result) {
-			transformed_weights = calloc(tile_input_size * tile_input_size * round_filter_channels * round_num_filters, sizeof(float));
+			get_transformed_weight_image_size(wtc, &transformed_weight_image_width, &transformed_weight_image_height);
+			transformed_weights = calloc((transformed_weight_image_width << 2) * transformed_weight_image_height, sizeof(float));
 		}
-		transform_weight(wtc, weights, transformed_weights);
+		transform_weight(wtc, weights, biases, transformed_weights);
 		if (save_result) {
 			save_volume(weights, 3, 3, filter_channels * nfilters, "weights.txt");
-			save_volume(transformed_weights, round_filter_channels, round_num_filters, 64, "transformed_weights.txt");
+			save_volume(biases, nfilters, 1, 1, "biases.txt");
+			save_volume(transformed_weights, transformed_weight_image_width << 2, transformed_weight_image_height, 1, "transformed_weights.txt");
 			free(transformed_weights);
 		}
-		free(weights);
 
-		input_transform_context *itc = create_input_transform_context(F6x6_3x3, input_width, input_height,
+		input_transform_context *itc = create_input_transform_context(F4x4_3x3, input_width, input_height,
 			input_channels, stride, padding);
 		
-		int transformed_input_width, transformed_input_height, array_size;
-		get_transformed_input_size(itc, &transformed_input_width, &transformed_input_height, &array_size);
-		
+		int transformed_input_width, transformed_input_height;		
 		if (save_result) {
-			transformed_input = calloc(transformed_input_width * transformed_input_height * array_size, sizeof(float));
+			get_transformed_input_image_size(itc, &transformed_input_width, &transformed_input_height);
+			transformed_input = calloc((transformed_input_width << 2) * transformed_input_height, sizeof(float));
 		}
 		struct timeval t1, t2; 
 		gettimeofday(&t1, NULL);
 		transform_input(itc, input, transformed_input);
 		gettimeofday(&t2, NULL);
 		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
-		printf("transform_input: %f ms.\n", duration);
 		total_duration[0] += duration;
+		printf("GPU & CPU, transform_input: %f ms, total %fms.\n", duration, total_duration[0]);
 		if (save_result) {
 			save_volume(input, input_width, input_height, input_channels, "inputs.txt");
-			save_volume(transformed_input, transformed_input_width, transformed_input_height, array_size, "transformed_inputs.txt");
+			save_volume(transformed_input, transformed_input_width << 2, transformed_input_height, 1, "transformed_input.txt");
 			free(transformed_input);
 		}
-		free(input);
 		
-		matrix_multiplication_context *mmc = create_matrix_multiplication_context(F6x6_3x3, wtc, itc);
+		matrix_multiplication_context *mmc = create_matrix_multiplication_context(wtc, itc);
+		
+		int output_image_width, output_image_height;
 		if (save_result) {
-			output = calloc(transformed_input_width * round_num_filters * tile_input_size * tile_input_size, sizeof(float));
+			get_transformed_output_image_size(mmc, &output_image_width, &output_image_height);
+			output = calloc((output_image_width << 2) * output_image_height, sizeof(float));
 		}
 		gettimeofday(&t1, NULL);
-		muliply_transformed_matrix(mmc, output);
+		multiply_transformed_matrix(mmc, output);
 		gettimeofday(&t2, NULL);
 		duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
-		printf("muliply_transformed_matrix: %f ms.\n", duration);
 		total_duration[1] += duration;
+		printf("GPU & CPU, multiply_transformed_matrix: %f ms, total %fms.\n", duration, total_duration[1]);
 		if (save_result) {
-			save_volume(output, tile_input_size * tile_input_size, transformed_input_width, round_num_filters, "output.txt");
+			save_volume(output, output_image_width << 2, output_image_height, 1, "output.txt");
 			free(output);
 		}
+	
+		output_inverse_transform_context *oitc = create_output_inverse_transform_context(mmc);
 		
-		output_inverse_transform_context *oitc = create_output_inverse_transform_context(F6x6_3x3, mmc);
-		const int tile_output_size = get_tile_output_size(F6x6_3x3);
-		const int ntilesX = (input_width + (tile_output_size - 1)) / tile_output_size;
-		const int ntilesY = (input_height + (tile_output_size - 1)) / tile_output_size;
+		int inverse_transformed_output_image_width, inverse_transformed_output_image_height;
 		if (save_result) {
-			inverse_transformed_output = calloc(nfilters * (ntilesX * ntilesY) * (tile_output_size * tile_output_size), sizeof(float));
+			get_inverse_transformed_output_image_size(oitc, &inverse_transformed_output_image_width,
+				&inverse_transformed_output_image_height);
+			inverse_transformed_output = calloc((inverse_transformed_output_image_width << 2) *
+				inverse_transformed_output_image_height, sizeof(float));
 		}
 		gettimeofday(&t1, NULL);
 		inverse_transform_output(oitc, inverse_transformed_output);
 		gettimeofday(&t2, NULL);
 		duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
-		printf("inverse_transform_output: %f ms.\n", duration);
 		total_duration[2] += duration;
+		printf("GPU & CPU, inverse_transform_output: %f ms, total %fms.\n", duration, total_duration[2]);
 		if (save_result) {
-			save_volume(inverse_transformed_output, ntilesX * tile_output_size, ntilesY * tile_output_size,
-				nfilters, "inverse_transformed_output.txt");
+			save_volume(inverse_transformed_output, inverse_transformed_output_image_width << 2, inverse_transformed_output_image_height,
+				1, "inverse_transformed_output.txt");
 			free(inverse_transformed_output);
 		}
 		
-		free_output_inverse_transform_context(oitc);
-		free_matrix_multiplication_context(mmc);
 		free_input_transform_context(itc);
 		free_weight_transform_context(wtc);
+		free_matrix_multiplication_context(mmc);
+		free_output_inverse_transform_context(oitc);
+		
+		if (save_result) {
+			dim3 input_size = {input_width, input_height, filter_channels};
+			dim3 output_size;
+			void *layers[] = {make_convolutional_layer(LEAKY, input_size, 3, nfilters, 1, 1, 1, 0, &output_size)};
+			znet *net = znet_create(layers, 1, "coco.weights");
+			convolutional_layer *layer = (convolutional_layer *)layers[0];
+			memcpy(layer->weights, weights, 3 * 3 * filter_channels * nfilters * sizeof(float));
+			for (int i = 0; i < nfilters; ++i) layer->biases[i] = biases[i];
+			layer->input = input;
+			forward_convolutional_layer(layer, net);
+			save_volume(layer->output, output_size.w, output_size.h, output_size.c, "gemm_conv.txt");
+			znet_destroy(net);
+		}
+		
+		free(weights);
+		free(biases);
+		free(input);
 	}
 
-	printf("transform_input total duration: %fms\n", total_duration[0]);
-	printf("muliply_transformed_matrix total duration: %fms\n", total_duration[1]);
-	printf("inverse_transform_output total duration: %fms\n", total_duration[2]);
 	cl_destroy_wrapper(wrapper);
 #endif	
 }

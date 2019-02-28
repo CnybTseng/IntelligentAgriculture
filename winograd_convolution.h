@@ -22,26 +22,29 @@ typedef struct matrix_multiplication_context matrix_multiplication_context;
 
 struct output_inverse_transform_context;
 typedef struct output_inverse_transform_context output_inverse_transform_context;
+
+struct winograd_convolution_context;
+typedef struct winograd_convolution_context winograd_convolution_context;
 #endif
 
 int get_image_tile_size(WINOGRAD_CONV_TYPE conv);
 int get_tile_output_size(WINOGRAD_CONV_TYPE conv);
 #ifdef OPENCL
-weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE conv, int filter_channels,
-	int nfilters);
-void transform_weight(weight_transform_context *context, float *weights, float *transformed_weights);
+weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE conv, int filter_channels, int nfilters);
+void get_transformed_weight_image_size(weight_transform_context *context, int *width, int *height);
+void transform_weight(weight_transform_context *context, float *weights, float *biases, float *transformed_weights);
 void free_weight_transform_context(weight_transform_context *context);
 input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv, int input_width,
 	int input_height, int input_channels, int stride, int padding);
-void get_transformed_input_size(input_transform_context *context, int *width, int *height, int *array_size);
+void get_transformed_input_image_size(input_transform_context *context, int *width, int *height);
 void transform_input(input_transform_context *context, float *input, float *transformed_input);
 void free_input_transform_context(input_transform_context *context);
-matrix_multiplication_context *create_matrix_multiplication_context(WINOGRAD_CONV_TYPE conv,
-	weight_transform_context *wtc, input_transform_context *itc);
-void muliply_transformed_matrix(matrix_multiplication_context *context, float *output);
+matrix_multiplication_context *create_matrix_multiplication_context(weight_transform_context *wtc, input_transform_context *itc);
+void get_transformed_output_image_size(matrix_multiplication_context *context, int *width, int *height);
+void multiply_transformed_matrix(matrix_multiplication_context *context, float *output);
 void free_matrix_multiplication_context(matrix_multiplication_context *context);
-output_inverse_transform_context *create_output_inverse_transform_context(WINOGRAD_CONV_TYPE conv,
-	matrix_multiplication_context *mmc);
+output_inverse_transform_context *create_output_inverse_transform_context(matrix_multiplication_context *mmc);
+void get_inverse_transformed_output_image_size(output_inverse_transform_context *context, int *width, int *height);
 void inverse_transform_output(output_inverse_transform_context *context, float *inverse_transformed_output);
 void free_output_inverse_transform_context(output_inverse_transform_context *context);
 #endif

@@ -1,220 +1,321 @@
-#pragma OPENCL EXTENSION cl_khr_3d_image_writes : enable
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+
+#define VECTOR_DATA_TYPE_STRING(data_type, size) data_type##size
+#define VECTOR_DATA_TYPE(data_type, size) VECTOR_DATA_TYPE_STRING(data_type, size)
+#define DATA_TYPE_Q VECTOR_DATA_TYPE(DATA_TYPE, 4)
 
 __kernel
-void weight_transform_f6x6_3x3(global const float *weight, global const float *Gbuffer,
-	global float *transformed_weight, const int filter_channels, const int nfilters, int xy_shift)
+void weight_transform_f4x4_3x3(__read_only image2d_t weight, __write_only image2d_t transformed_weight)
 {
 	int gx = get_global_id(0);
+	int gy = get_global_id(1);
+	const int channel_groups = get_global_size(0);
 	
-	float4 G[8];
-	float4 g[3];
-	float4 Gg[8];
-	float4 GgGT;
-	
-	const int slice_pitch = (((filter_channels + 3) / 4) * 4) * (((nfilters + 3) / 4) * 4);
-	const int xy = xy_shift + (gx / filter_channels) * (((filter_channels + 3) / 4) * 4) + gx % filter_channels;
-	
+	float4 g[9];
+	float4 Gg[18];
+	float4 GgGT[36];
+
 	#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		G[i] = vload4(0, Gbuffer + (i << 2));
+	for (int i = 0; i < 9; i++) {
+		g[i] = read_imagef(weight, (int2)(mul24(gx, 9) + i, gy));
 	}
 	
 	#pragma unroll
-	for (int i = 0; i < 3; i++) {
-		g[i] = vload4(0, weight + 9 * gx + i * 3);
+	for (int x = 0; x < 3; x++) {
+		Gg[x] = 0.25f * g[x];
+		Gg[3 + x] = -0.1666667f * (g[x] + g[3 + x] + g[6 + x]);
+		Gg[6 + x] = -0.1666667f * (g[x] - g[3 + x] + g[6 + x]);
+		Gg[9 + x] = 0.0416667f * (g[x] + 2 * g[3 + x] + 4 * g[6 + x]);
+		Gg[12 + x] = 0.0416667f * (g[x] - 2 * g[3 + x] + 4 * g[6 + x]);
+		Gg[15 + x] = g[6 + x];
 	}
 	
 	#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		Gg[i].x = G[i].x * g[0].x + G[i].y * g[1].x + G[i].z * g[2].x;
-		Gg[i].y = G[i].x * g[0].y + G[i].y * g[1].y + G[i].z * g[2].y;
-		Gg[i].z = G[i].x * g[0].z + G[i].y * g[1].z + G[i].z * g[2].z;
+	for (int y = 0; y < 6; y++) {
+		GgGT[y * 6] = 0.25f * Gg[y * 3];
+		GgGT[y * 6 + 1] = -0.1666667f * (Gg[y * 3] + Gg[y * 3 + 1] + Gg[y * 3 + 2]);
+		GgGT[y * 6 + 2] = -0.1666667f * (Gg[y * 3] - Gg[y * 3 + 1] + Gg[y * 3 + 2]);
+		GgGT[y * 6 + 3] = 0.0416667f * (Gg[y * 3] + 2 * Gg[y * 3 + 1] + 4 * Gg[y * 3 + 2]);
+		GgGT[y * 6 + 4] = 0.0416667f * (Gg[y * 3] - 2 * Gg[y * 3 + 1] + 4 * Gg[y * 3 + 2]);
+		GgGT[y * 6 + 5] = Gg[y * 3 + 2];
 	}
 	
 	#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		GgGT.x = Gg[i].x * G[0].x + Gg[i].y * G[0].y + Gg[i].z * G[0].z;
-		GgGT.y = Gg[i].x * G[1].x + Gg[i].y * G[1].y + Gg[i].z * G[1].z;
-		GgGT.z = Gg[i].x * G[2].x + Gg[i].y * G[2].y + Gg[i].z * G[2].z;
-		GgGT.w = Gg[i].x * G[3].x + Gg[i].y * G[3].y + Gg[i].z * G[3].z;
-		// vstore4(GgGT, 0, transformed_weight + 64 * gx + i * 8);
-		
-		transformed_weight[(i << 3) * slice_pitch + xy] = GgGT.x;
-		transformed_weight[((i << 3) + 1) * slice_pitch + xy] = GgGT.y;
-		transformed_weight[((i << 3) + 2) * slice_pitch + xy] = GgGT.z;
-		transformed_weight[((i << 3) + 3) * slice_pitch + xy] = GgGT.w;
-		
-		GgGT.x = Gg[i].x * G[4].x + Gg[i].y * G[4].y + Gg[i].z * G[4].z;
-		GgGT.y = Gg[i].x * G[5].x + Gg[i].y * G[5].y + Gg[i].z * G[5].z;
-		GgGT.z = Gg[i].x * G[6].x + Gg[i].y * G[6].y + Gg[i].z * G[6].z;
-		GgGT.w = Gg[i].x * G[7].x + Gg[i].y * G[7].y + Gg[i].z * G[7].z;
-		// vstore4(GgGT, 0, transformed_weight + 64 * gx + i * 8 + 4);
-		
-		transformed_weight[((i << 3) + 4) * slice_pitch + xy] = GgGT.x;
-		transformed_weight[((i << 3) + 5) * slice_pitch + xy] = GgGT.y;
-		transformed_weight[((i << 3) + 6) * slice_pitch + xy] = GgGT.z;
-		transformed_weight[((i << 3) + 7) * slice_pitch + xy] = GgGT.w;
+	for (int i = 0; i < 36; i++) {
+		write_imagef(transformed_weight, (int2)(gx + i * channel_groups, gy), GgGT[i]);
 	}
 }
 
 __kernel
-void input_transform_f6x6_3x3(__read_only image2d_t input, const int height_per_channel,
-	global const float *BTbuffer, global float *transformed_input)
+void input_transform_f4x4_3x3(__read_only image2d_t input, __write_only image2d_t transformed_input,
+	__private const int input_width, __private const int input_height, __private const int input_channels,
+	__private const int ntilesX)
 {
-	int gx = get_global_id(0);
-	int gy = get_global_id(1);
-	int gz = get_global_id(2);
+	int tile_id = get_global_id(0);
+	int channel_block_id = get_global_id(1);
 	
-	float4 d[16];
-	float4 BT[16];
-	float4 BTd[16];
-	float4 BTdB;
+	const int channel_blocks = get_global_size(1);
+	const int tile_y = tile_id / ntilesX;
+	const int tile_x = tile_id - mul24(tile_y, ntilesX);
+	const int pixel_x = (tile_x << 2) - 1;
+	const int pixel_y = (tile_y << 2) - 1;
+	const int pos = channel_block_id * input_width + pixel_x;
 	
-	const int slice_pitch = (((get_global_size(0) * get_global_size(1) + 3) / 4) * 4) * (((get_global_size(2) + 3) / 4) * 4);
-	const int xy = gz * (((get_global_size(0) * get_global_size(1) + 3) / 4) * 4) + gy * get_global_size(0) + gx;
-	
+	float4 d[36];
+	float4 BTd[36];
+	float4 BTdB[36];
+
+	int y = select(pixel_y, -1, pixel_y < 0 || pixel_y > input_height - 1);
 	#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		d[i << 1] = read_imagef(input, (int2)(gx << 1, gz * height_per_channel + gy * 6 + i));
-		d[(i << 1) + 1] = read_imagef(input, (int2)((gx << 1) + 1, gz * height_per_channel + gy * 6 + i));
+	for (int i = 0; i < 6; i++) {
+		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
+		d[i] = read_imagef(input, (int2)(x, y));
+	}
+	
+	y = select(pixel_y + 1, -1, pixel_y + 1 < 0 || pixel_y + 1 > input_height - 1);
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
+		d[6 + i] = read_imagef(input, (int2)(x, y));
+	}
+	
+	y = select(pixel_y + 2, -1, pixel_y + 2 < 0 || pixel_y + 2 > input_height - 1);
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
+		d[12 + i] = read_imagef(input, (int2)(x, y));
+	}
+	
+	y = select(pixel_y + 3, -1, pixel_y + 3 < 0 || pixel_y + 3 > input_height - 1);
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
+		d[18 + i] = read_imagef(input, (int2)(x, y));
+	}
+	
+	y = select(pixel_y + 4, -1, pixel_y + 4 < 0 || pixel_y + 4 > input_height - 1);
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
+		d[24 + i] = read_imagef(input, (int2)(x, y));
+	}
+	
+	y = select(pixel_y + 5, -1, pixel_y + 5 < 0 || pixel_y + 5 > input_height - 1);
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
+		d[30 + i] = read_imagef(input, (int2)(x, y));
 	}
 	
 	#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		BT[i << 1] = vload4(0, BTbuffer + (i << 3));
-		BT[(i << 1) + 1] = vload4(0, BTbuffer + (i << 3) + 4);
+	for (int x = 0; x < 6; x++) {
+		BTd[x] = 4 * d[x] - 5 * d[12 + x] + d[24 + x];
+		BTd[6 + x] = -4 * d[6 + x] - 4 * d[12 + x] + d[18 + x] + d[24 + x];
+		BTd[12 + x] = 4 * d[6 + x] - 4 * d[12 + x] - d[18 + x] + d[24 + x];
+		BTd[18 + x] = -2 * d[6 + x] - 1 * d[12 + x] + 2 * d[18 + x] + d[24 + x];
+		BTd[24 + x] = 2 * d[6 + x] - 1 * d[12 + x] - 2 * d[18 + x] + d[24 + x];
+		BTd[30 + x] = 4 * d[6 + x] - 5 * d[18 + x] + d[30 + x];
 	}
 	
 	#pragma unroll
-	for (int i = 0; i < 8; i++) {		
-		BTd[i << 1] = BT[i << 1].x * d[0] + BT[i << 1].y * d[2] + BT[i << 1].z * d[4] + BT[i << 1].w * d[6] +
-			BT[(i << 1) + 1].x * d[8] + BT[(i << 1) + 1].y * d[10] + BT[(i << 1) + 1].z * d[12] + BT[(i << 1) + 1].w * d[14];
-		
-		BTd[(i << 1) + 1] = BT[i << 1].x * d[1] + BT[i << 1].y * d[3] + BT[i << 1].z * d[5] + BT[i << 1].w * d[7] +
-			BT[(i << 1) + 1].x * d[9] + BT[(i << 1) + 1].y * d[11] + BT[(i << 1) + 1].z * d[13] + BT[(i << 1) + 1].w * d[15];
+	for (int y = 0; y < 6; y++) {
+		BTdB[6 * y] = 4 * BTd[6 * y] - 5 * BTd[6 * y + 2] + BTd[6 * y + 4];
+		BTdB[6 * y + 1] = -4 * BTd[6 * y + 1] - 4 * BTd[6 * y + 2] + BTd[6 * y + 3] + BTd[6 * y + 4];
+		BTdB[6 * y + 2] = 4 * BTd[6 * y + 1] - 4 * BTd[6 * y + 2] - BTd[6 * y + 3] + BTd[6 * y + 4];
+		BTdB[6 * y + 3] = -2 * BTd[6 * y + 1] - 1 * BTd[6 * y + 2] + 2 * BTd[6 * y + 3] + BTd[6 * y + 4];
+		BTdB[6 * y + 4] = 2 * BTd[6 * y + 1] - 1 * BTd[6 * y + 2] - 2 * BTd[6 * y + 3] + BTd[6 * y + 4];
+		BTdB[6 * y + 5] = 4 * BTd[6 * y + 1] - 5 * BTd[6 * y + 3] + BTd[6 * y + 5];
 	}
 	
 	#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		BTdB.x = dot(BTd[i << 1], BT[0]) + dot(BTd[(i << 1) + 1], BT[1]);
-		BTdB.y = dot(BTd[i << 1], BT[2]) + dot(BTd[(i << 1) + 1], BT[3]);
-		BTdB.z = dot(BTd[i << 1], BT[4]) + dot(BTd[(i << 1) + 1], BT[5]);
-		BTdB.w = dot(BTd[i << 1], BT[6]) + dot(BTd[(i << 1) + 1], BT[7]);
-		
-		transformed_input[(i << 3) * slice_pitch + xy] = BTdB.x;
-		transformed_input[((i << 3) + 1) * slice_pitch + xy] = BTdB.y;
-		transformed_input[((i << 3) + 2) * slice_pitch + xy] = BTdB.z;
-		transformed_input[((i << 3) + 3) * slice_pitch + xy] = BTdB.w;
-		
-		BTdB.x = dot(BTd[i << 1], BT[8]) + dot(BTd[(i << 1) + 1], BT[9]);
-		BTdB.y = dot(BTd[i << 1], BT[10]) + dot(BTd[(i << 1) + 1], BT[11]);
-		BTdB.z = dot(BTd[i << 1], BT[12]) + dot(BTd[(i << 1) + 1], BT[13]);
-		BTdB.w = dot(BTd[i << 1], BT[14]) + dot(BTd[(i << 1) + 1], BT[15]);
-		
-		transformed_input[((i << 3) + 4) * slice_pitch + xy] = BTdB.x;
-		transformed_input[((i << 3) + 5) * slice_pitch + xy] = BTdB.y;
-		transformed_input[((i << 3) + 6) * slice_pitch + xy] = BTdB.z;
-		transformed_input[((i << 3) + 7) * slice_pitch + xy] = BTdB.w;
+	for (int i = 0; i < 6; i++) {
+		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[i]);
+		channel_block_id += channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[6 + i]);
+		channel_block_id += channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[12 + i]);
+		channel_block_id += channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[18 + i]);
+		channel_block_id += channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[24 + i]);
+		channel_block_id += channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[30 + i]);
+		channel_block_id += channel_blocks;
 	}
 }
 
 __kernel
-void matrix_multiply(global const float *transformed_weight, global const float *transformed_input,
-	global float *output, const int round_filter_channels, const int round_num_filters, const int tile_size,
-	const int round_num_tiles)
+void matrix_multiply(__read_only image2d_t transformed_weight, __read_only image2d_t transformed_input,
+	__write_only image2d_t output, __private const int input_channel_blocks, __private const int output_channel_blocks,
+	__private const int ntiles)
 {
-	int gx = get_global_id(0);
-	int gy = get_global_id(1);
-	int gz = get_global_id(2);
+	int tile_id = get_global_id(0) << 2;
+	int output_channel_block_global_id = get_global_id(1);
 	
-	float4 a[4];
-	float4 b[4];
-	float4 c[4];
+	const int batch = output_channel_block_global_id / output_channel_blocks;
+	const int output_channel_block_id = output_channel_block_global_id - mul24(batch, output_channel_blocks);
+	const int batch_pos = mul24(batch, input_channel_blocks);
+	const int output_channel_id = output_channel_block_id << 2;
 	
-	const int slice_pitch = tile_size * tile_size * round_num_tiles;
+	float4 a0, a1, a2, a3;
+	float4 b0, b1, b2, b3;
+	float4 c0 = 0, c1 = 0, c2 = 0, c3 = 0;
 	
-	#pragma unroll
-	for (int i = 0; i < 4; i++) {
-		c[i] = 0;
-	}
-	
-	for (int i = 0; i < round_filter_channels; i += 4) {
-		#pragma unroll
-		for (int j = 0; j < 4; j++) {
-			a[j] = vload4(0, transformed_weight + gz * round_filter_channels * round_num_filters +
-				((gy << 2) + j) * round_filter_channels + i);
-		}
+	for (int i = 0; i < input_channel_blocks; i++) {
+		a0 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id));
+		a1 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id + 1));
+		a2 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id + 2));
+		a3 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id + 3));
 		
-		#pragma unroll
-		for (int j = 0; j < 4; j++) {
-			b[j] = vload4(0, transformed_input + gz * round_num_tiles * round_filter_channels +
-				(i + j) * round_num_tiles + (gx << 2));
-		}
+		b0 = read_imagef(transformed_input, (int2)(tile_id, batch_pos + i));
+		b1 = read_imagef(transformed_input, (int2)(tile_id + 1, batch_pos + i));
+		b2 = read_imagef(transformed_input, (int2)(tile_id + 2, batch_pos + i));
+		b3 = read_imagef(transformed_input, (int2)(tile_id + 3, batch_pos + i));
 		
-		#pragma unroll
-		for (int j = 0; j < 4; j++) {
-			c[j] += a[j].x * b[0] + a[j].y * b[1] + a[j].z * b[2] + a[j].w * b[3];
-		}
+		c0 += (float4)(dot(a0, b0), dot(a1, b0), dot(a2, b0), dot(a3, b0));
+		c1 += (float4)(dot(a0, b1), dot(a1, b1), dot(a2, b1), dot(a3, b1));
+		c2 += (float4)(dot(a0, b2), dot(a1, b2), dot(a2, b2), dot(a3, b2));
+		c3 += (float4)(dot(a0, b3), dot(a1, b3), dot(a2, b3), dot(a3, b3));
 	}
-	
-	#pragma unroll
-	for (int i = 0; i < 4; i++) {
-		// vstore4(c[i], 0, output + gz * round_num_tiles * round_num_filters + ((gy << 2) + i) * round_num_tiles + (gx << 2));
-		output[((gy << 2) + i) * slice_pitch + ((gx << 2) + 0) * tile_size * tile_size + gz] = c[i].x;
-		output[((gy << 2) + i) * slice_pitch + ((gx << 2) + 1) * tile_size * tile_size + gz] = c[i].y;
-		output[((gy << 2) + i) * slice_pitch + ((gx << 2) + 2) * tile_size * tile_size + gz] = c[i].z;
-		output[((gy << 2) + i) * slice_pitch + ((gx << 2) + 3) * tile_size * tile_size + gz] = c[i].w;
-	}
+
+	write_imagef(output, (int2)(tile_id, output_channel_block_global_id), c0);
+	if ((tile_id + 1) >= ntiles) return;
+	write_imagef(output, (int2)(tile_id + 1, output_channel_block_global_id), c1);
+	if ((tile_id + 2) >= ntiles) return;
+	write_imagef(output, (int2)(tile_id + 2, output_channel_block_global_id), c2);
+	if ((tile_id + 3) >= ntiles) return;
+	write_imagef(output, (int2)(tile_id + 3, output_channel_block_global_id), c3);
 }
 
 __kernel
-void inverse_output_transform_f6x6_3x3(global const float *output, global float *inverse_transformed_output,
-	global const float *ATBuffer, const int round_num_tiles, const int tile_size, const int round_num_filters,
-	const int valid_width, const int valid_height, const int ntilesX, const int ntilesY)
+void inverse_output_transform_f4x4_3x3(__read_only image2d_t output, __read_only image1d_t biases,
+	__write_only image2d_t inverse_transformed_output, __private const int ntilesX,
+	__private const int output_width, __private const int output_height)
 {
-	int gx = get_global_id(0);
-	int gy = get_global_id(1);
+	int tile_id = get_global_id(0);
+	int output_channel_block_id = get_global_id(1);
 	
-	float4 o[16];
-	float4 AT[12];
-	float4 ATo[12];
-	float4 AToA;
+	const int tile_y = tile_id / ntilesX;
+	const int tile_x = tile_id - mul24(tile_y, ntilesX);
+	const int pixel_x = tile_x << 2;
+	const int pixel_y = tile_y << 2;
+	const int output_channel_blocks = get_global_size(1);
+	const int pos = mad24(output_channel_block_id, output_width, pixel_x);
 	
-	const int output_slice_pitch = round_num_tiles * tile_size * tile_size;
-	const int inverse_output_slice_pitch = ntilesX * ntilesY * 36;
-
+	float4 out[36];
+	float4 b;
+	float4 ATout[24];
+	float4 AToutA[16];
+	
+	int output_channel_block_global_id = output_channel_block_id;
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		out[i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		output_channel_block_global_id += output_channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		out[6 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		output_channel_block_global_id += output_channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		out[12 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		output_channel_block_global_id += output_channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		out[18 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		output_channel_block_global_id += output_channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		out[24 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		output_channel_block_global_id += output_channel_blocks;
+	}
+	
+	b = read_imagef(biases, output_channel_block_id);
+	
+	#pragma unroll
+	for (int i = 0; i < 6; i++) {
+		out[30 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		output_channel_block_global_id += output_channel_blocks;
+	}
+	
+	#pragma unroll
+	for (int x = 0; x < 6; x++) {
+		ATout[x] = out[x] + out[6 + x] + out[12 + x] + out[18 + x] + out[24 + x];
+		ATout[6 + x] = out[6 + x] - out[12 + x] + 2 * out[18 + x] - 2 * out[24 + x];
+		ATout[12 + x] = out[6 + x] + out[12 + x] + 4 * out[18 + x] + 4 * out[24 + x];
+		ATout[18 + x] = out[6 + x] - out[12 + x] + 8 * out[18 + x] - 8 * out[24 + x] + out[30 + x];
+	}
+	
+	#pragma unroll
+	for (int y = 0; y < 4; y++) {
+		AToutA[y * 4] = ATout[6 * y] + ATout[6 * y + 1] + ATout[6 * y + 2] + ATout[6 * y + 3] + ATout[6 * y + 4];
+		AToutA[y * 4 + 1] = ATout[6 * y + 1] - ATout[6 * y + 2] + 2 * ATout[6 * y + 3] - 2 * ATout[6 * y + 4];
+		AToutA[y * 4 + 2] = ATout[6 * y + 1] + ATout[6 * y + 2] + 4 * ATout[6 * y + 3] + 4 * ATout[6 * y + 4];
+		AToutA[y * 4 + 3] = ATout[6 * y + 1] - ATout[6 * y + 2] + 8 * ATout[6 * y + 3] - 8 * ATout[6 * y + 4] + ATout[6 * y + 5];
+	}
+	
 	#pragma unroll
 	for (int i = 0; i < 16; i++) {
-		o[i] = vload4(0, output + gy * output_slice_pitch + gx * tile_size * tile_size + (i << 2));
+		AToutA[i] += b;
+		AToutA[i] = select(0.1 * AToutA[i], AToutA[i], AToutA[i] > (float4)(0));
 	}
+
+	const int still_left_x = min(4, output_width - pixel_x);
+	const int still_left_y = output_height - pixel_y;
+	
+	if (still_left_y < 1) return;
 	
 	#pragma unroll
-	for (int i = 0; i < 12; i++) {
-		AT[i] = vload4(0, ATBuffer + (i << 2));
+	for (int i = 0; i < still_left_x; i++) {
+		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y), AToutA[i]);
 	}
 	
+	if (still_left_y < 2) return;
+
 	#pragma unroll
-	for (int i = 0; i < 6; i++) {
-		ATo[i << 1] = AT[i << 1].x * o[0] + AT[i << 1].y * o[2] + AT[i << 1].z * o[4] + AT[i << 1].w * o[6] +
-			AT[(i << 1) + 1].x * o[8] + AT[(i << 1) + 1].y * o[10] + AT[(i << 1) + 1].z * o[12] + AT[(i << 1) + 1].w * o[14];
-		ATo[(i << 1) + 1] = AT[i << 1].x * o[1] + AT[i << 1].y * o[3] + AT[i << 1].z * o[5] + AT[i << 1].w * o[7] +
-			AT[(i << 1) + 1].x * o[9] + AT[(i << 1) + 1].y * o[11] + AT[(i << 1) + 1].z * o[13] + AT[(i << 1) + 1].w * o[15];
+	for (int i = 0; i < still_left_x; i++) {
+		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y + 1), AToutA[4 + i]);
 	}
 	
+	if (still_left_y < 3) return;
+
 	#pragma unroll
-	for (int i = 0; i < 6; i++) {
-		AToA.x = dot(ATo[i << 1], AT[0]) + dot(ATo[(i << 1) + 1], AT[1]);
-		AToA.y = dot(ATo[i << 1], AT[2]) + dot(ATo[(i << 1) + 1], AT[3]);
-		AToA.z = dot(ATo[i << 1], AT[4]) + dot(ATo[(i << 1) + 1], AT[5]);
-		AToA.w = dot(ATo[i << 1], AT[6]) + dot(ATo[(i << 1) + 1], AT[7]);
-		
-		vstore4(AToA, 0, inverse_transformed_output + gy * inverse_output_slice_pitch + ((gx / ntilesX) * 6 + i) *
-			(ntilesX * 6) + ((gx % ntilesX) * 6));
-		
-		AToA.x = dot(ATo[i << 1], AT[8]) + dot(ATo[(i << 1) + 1], AT[9]);
-		AToA.y = dot(ATo[i << 1], AT[10]) + dot(ATo[(i << 1) + 1], AT[11]);
-		
-		vstore2(AToA.xy, 0, inverse_transformed_output + gy * inverse_output_slice_pitch + ((gx / ntilesX) * 6 + i) *
-			(ntilesX * 6) + ((gx % ntilesX) * 6) + 4);
+	for (int i = 0; i < still_left_x; i++) {
+		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y + 2), AToutA[8 + i]);
+	}
+	
+	if (still_left_y < 4) return;
+
+	#pragma unroll
+	for (int i = 0; i < still_left_x; i++) {
+		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y + 3), AToutA[12 + i]);
 	}
 }

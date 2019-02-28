@@ -1,4 +1,4 @@
-ARCH=arm
+ARCH?=arm
 GPU=1
 NNPACK=0
 CLBLAST=0
@@ -58,7 +58,7 @@ INC+= -I../thirdparty/opencl-2.0/include -I../thirdparty/NNPACK/include \
 -I../thirdparty/clblast/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=110 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DAICORE_BUILD_DLL
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=120 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DAICORE_BUILD_DLL
 ifeq ($(GPU),1)
 CFLAGS+= -DOPENCL -DWINOGRAD_CONVOLUTION -DCL_PROFILING_ENABLE
 ifeq ($(CLBLAST),1)
