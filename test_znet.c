@@ -77,6 +77,7 @@ void test_nnpack(int argc, char *argv[]);
 void test_winograd_weight_transformation(int argc, char *argv[]);
 void test_winograd_input_transformation(int argc, char *argv[]);
 void test_winograd_convolution(int argc, char *argv[]);
+void test_normalize_image_with_gpu(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
@@ -1693,5 +1694,175 @@ void test_winograd_convolution(int argc, char *argv[])
 	}
 
 	cl_destroy_wrapper(wrapper);
+#endif	
+}
+
+void test_normalize_image_with_gpu(int argc, char *argv[])
+{
+#if OPENCL
+	cl_program program = 0;
+	cl_kernel kernel = 0;
+	bitmap *bmp = NULL;
+	cl_mem image = 0;
+	cl_mem normalized_image = 0;
+	unsigned char *normalized_image_buffer = NULL;
+	bitmap *normalized_bmp = NULL;
+
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	char options[] = "";
+	program = cl_make_wrapper_program(wrapper, "utils.cl", options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	kernel = cl_make_wrapper_kernel(wrapper, program, "normalize_image", &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+
+	bmp = read_bmp(argv[1]);
+	if (!bmp) {
+		fprintf(stderr, "read_bmp fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_UNORM_INT8
+	};
+	
+	const int width = get_bmp_width(bmp);
+	const int height = get_bmp_height(bmp);
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = width;
+	image_desc.image_height = height;
+	
+	image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	const int normalized_width = 416;
+	const int normalized_height = 416;
+	mem_flags = CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	image_format.image_channel_data_type = CL_FLOAT;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = normalized_width;
+	image_desc.image_height = normalized_height;
+	
+	normalized_image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {width, height, 1};
+	size_t row_pitch, slice_pitch;
+	unsigned char *h_image = clEnqueueMapImage(wrapper.command_queue, image, CL_TRUE, CL_MAP_WRITE,
+		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
+
+	const unsigned char *data = get_bmp_data(bmp);
+	const int src_row_pitch = get_bmp_pitch(bmp);
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; ++x) {
+			h_image[y * row_pitch + (x << 2)]     = data[y * src_row_pitch + x * 3];
+			h_image[y * row_pitch + (x << 2) + 1] = data[y * src_row_pitch + x * 3 + 1];
+			h_image[y * row_pitch + (x << 2) + 2] = data[y * src_row_pitch + x * 3 + 2];
+			h_image[y * row_pitch + (x << 2) + 3] = 0;
+		}
+	}
+	cl_event event;
+	clEnqueueUnmapMemObject(wrapper.command_queue, image, h_image, 0, NULL, &event);
+
+	int resized_width, resized_height;
+	if (normalized_width / (float)width < normalized_height / (float)height) {
+		resized_width = normalized_width;
+		resized_height = (int)(height * normalized_width / (float)width);
+	} else {
+		resized_width = (int)(width * normalized_height / (float)height);
+		resized_height = normalized_height;
+	}
+	
+	region[0] = normalized_width;
+	region[1] = normalized_height;
+	float fill_color[] = {0.5f, 0.5f, 0.5f, 0.5f};
+	errcode = clEnqueueFillImage(wrapper.command_queue, normalized_image, fill_color, origin, region, 0, NULL, NULL);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clEnqueueFillImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	errcode  = clSetKernelArg(kernel, 0, sizeof(cl_mem), &image);
+	errcode |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &normalized_image);
+	errcode |= clSetKernelArg(kernel, 2, sizeof(int), &resized_width);
+	errcode |= clSetKernelArg(kernel, 3, sizeof(int), &resized_height);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clSetKernelArg fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+
+	cl_uint work_dim = 2;
+	size_t global_work_size[] = {resized_width, resized_height};
+	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
+		NULL, 0, NULL, &event);
+
+#ifdef CL_PROFILING_ENABLE	
+	cl_ulong start, end;
+	clFinish(wrapper.command_queue);
+	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
+	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
+	float duration = (end - start) * 1e-6f;
+	printf("GPU, normalize_image: %fms.\n", duration);
+#endif
+	clReleaseEvent(event);		
+		
+	normalized_image_buffer = calloc(normalized_width * normalized_height * 3, sizeof(unsigned char));
+	if (!normalized_image_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+
+	region[0] = normalized_width;
+	region[1] = normalized_height;
+	float *h_normalized_image = clEnqueueMapImage(wrapper.command_queue, normalized_image, CL_TRUE, CL_MAP_READ,
+		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
+	row_pitch = row_pitch >> 2;
+	for (int y = 0; y < normalized_height; ++y) {
+		for (int x = 0; x < normalized_width; ++x) {
+			normalized_image_buffer[3 * (y * normalized_width + x)]     = (unsigned char)(h_normalized_image[y * row_pitch + (x << 2)] * 255);
+			normalized_image_buffer[3 * (y * normalized_width + x) + 1] = (unsigned char)(h_normalized_image[y * row_pitch + (x << 2) + 1] * 255);
+			normalized_image_buffer[3 * (y * normalized_width + x) + 2] = (unsigned char)(h_normalized_image[y * row_pitch + (x << 2) + 2] * 255);
+		}
+	}
+	clEnqueueUnmapMemObject(wrapper.command_queue, normalized_image, h_normalized_image, 0, NULL, &event);
+	
+	normalized_bmp = create_bmp((const char *)normalized_image_buffer, normalized_width, normalized_height, 24);
+	save_bmp(normalized_bmp, "gpu-normalized_image.bmp");
+	
+	cleanup:
+	free(normalized_image_buffer);
+	delete_bmp(bmp);
+	delete_bmp(normalized_bmp);
+	clReleaseMemObject(image);
+	clReleaseMemObject(normalized_image);
+	clReleaseProgram(program);
+	clReleaseKernel(kernel);
+	cl_destroy_wrapper(wrapper);
+#else
+#	error "please open OpenCL support!"
 #endif	
 }

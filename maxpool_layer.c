@@ -1,6 +1,10 @@
 #include <omp.h>
 #include <float.h>
+#include <string.h>
 #include "maxpool_layer.h"
+#ifdef OPENCL
+#	include "cl_wrapper.h"
+#endif
 
 #ifdef NNPACK
 struct maxpool_thread_param {
@@ -9,6 +13,11 @@ struct maxpool_thread_param {
 };
 
 static void maxpool_thread(struct maxpool_thread_param *param, size_t batch_size, size_t nchannels);
+#endif
+
+#ifdef OPENCL
+extern cl_wrapper wrapper;
+void cl_forward_maxpool_layer(void *_layer, znet *net);
 #endif
 
 void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int padding, int batch_size,
@@ -182,5 +191,97 @@ void maxpool_thread(struct maxpool_thread_param *param, size_t batch_size, size_
 			layer->output[idx] = maxval;
 		}
 	}
+}
+#endif
+
+#ifdef OPENCL
+void cl_forward_maxpool_layer(void *_layer, znet *net)
+{
+	maxpool_layer *layer = (maxpool_layer *)_layer;
+	const int offsetx = -layer->padding / 2;
+	const int offsety = -layer->padding / 2;
+	
+	cl_program program = 0;
+	cl_kernel kernel = 0;
+	cl_mem d_input = 0;
+	cl_mem d_output = 0;
+	const int channel_blocks = (layer->input_size.c + 3) >> 2;
+	const int input_image_width = layer->input_size.w * channel_blocks;
+	const int input_image_height = layer->input_size.h;
+	const int output_image_width = maxpool_output_width(layer) * channel_blocks;
+	const int output_image_height = maxpool_output_height(layer);
+	
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	char options[] = "";
+	program = cl_make_wrapper_program(wrapper, "maxpool.cl", options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	kernel = cl_make_wrapper_kernel(wrapper, program, "maxpool", &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = input_image_width;
+	image_desc.image_height = input_image_height;
+	
+	d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = output_image_width;
+	image_desc.image_height = output_image_height;
+	
+	d_output = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	cl_event event;
+	cl_uint work_dim = 2;
+	size_t global_work_size[] = {output_image_width, output_image_height};
+	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
+		NULL, 0, NULL, &event);
+
+#ifdef CL_PROFILING_ENABLE	
+	cl_ulong start, end;
+	clFinish(wrapper.command_queue);
+	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
+	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
+	float duration = (end - start) * 1e-6f;
+	printf("GPU, maxpool: %fms.\n", duration);
+#endif
+	clReleaseEvent(event);
+	
+	cleanup:
+	clReleaseMemObject(d_input);
+	clReleaseMemObject(d_output);
+	clReleaseProgram(program);
+	clReleaseKernel(kernel);
+	cl_destroy_wrapper(wrapper);
 }
 #endif

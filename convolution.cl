@@ -285,7 +285,7 @@ void inverse_output_transform_f4x4_3x3(__read_only image2d_t output, __read_only
 	#pragma unroll
 	for (int i = 0; i < 16; i++) {
 		AToutA[i] += b;
-		AToutA[i] = select(0.1 * AToutA[i], AToutA[i], AToutA[i] > (float4)(0));
+		AToutA[i] = select(0.1f * AToutA[i], AToutA[i], AToutA[i] > (float4)(0));
 	}
 
 	const int still_left_x = min(4, output_width - pixel_x);
