@@ -78,10 +78,11 @@ void test_winograd_weight_transformation(int argc, char *argv[]);
 void test_winograd_input_transformation(int argc, char *argv[]);
 void test_winograd_convolution(int argc, char *argv[]);
 void test_normalize_image_with_gpu(int argc, char *argv[]);
+void test_maxpool_layer_with_gpu(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_winograd_convolution(argc, argv);
+	test_maxpool_layer_with_gpu(argc, argv);
 	
 	return 0;
 }
@@ -1862,7 +1863,30 @@ void test_normalize_image_with_gpu(int argc, char *argv[])
 	clReleaseProgram(program);
 	clReleaseKernel(kernel);
 	cl_destroy_wrapper(wrapper);
-#else
-#	error "please open OpenCL support!"
 #endif	
+}
+
+void test_maxpool_layer_with_gpu(int argc, char *argv[])
+{
+	const int input_width = 416;
+	const int input_height = 416;
+	const int filter_channels = 16;
+	
+	float *input = calloc(input_width * input_height * filter_channels, sizeof(float));
+	srand(time(NULL));
+	for (int i = 0; i < input_width * input_height * filter_channels; ++i) {
+		input[i] = rand() / (double)RAND_MAX - 0.5;
+	}
+	
+	save_volume(input, input_width, input_height, filter_channels, "input.txt");
+	dim3 input_size = {input_width, input_height, filter_channels};
+	dim3 output_size;
+	void *layers[] = {make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size)};
+	znet *net = znet_create(layers, 1, "coco.weights");
+	maxpool_layer *layer = (maxpool_layer *)layers[0];
+	layer->input = input;
+	forward_maxpool_layer(layer, net);
+	save_volume(layer->output, output_size.w * output_size.c, output_size.h, 1, "maxpool.txt");
+	znet_destroy(net);
+	free(input);
 }

@@ -1,6 +1,6 @@
 ARCH?=arm
-GPU=1
-NNPACK=0
+GPU?=1
+NNPACK?=0
 CLBLAST=0
 
 RM=rm -f
