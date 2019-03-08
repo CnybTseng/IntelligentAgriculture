@@ -214,12 +214,13 @@ cl_program cl_create_program_with_source(cl_device_id device, cl_context context
 		return 0;
 	}
 	
-	char *strings = calloc(stbuf.st_size, sizeof(char));
+	char *strings = calloc(stbuf.st_size + 1, sizeof(char));
 	if (!strings) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		return 0;
 	}
 	
+	strings[stbuf.st_size] = '\0';
 	FILE *fp = fopen(filename, "rb");
 	if (!fp) {
 		fprintf(stderr, "fopen[%s:%d].\n", __FILE__, __LINE__);
@@ -256,12 +257,13 @@ cl_program cl_create_program_from_binary(cl_device_id device, cl_context context
 		return 0;
 	}
 	
-	unsigned char *binaries = calloc(stbuf.st_size, sizeof(unsigned char));
+	unsigned char *binaries = calloc(stbuf.st_size + 1, sizeof(unsigned char));
 	if (!binaries) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		return 0;
 	}
 	
+	binaries[stbuf.st_size] = '\0';
 	FILE *fp = fopen(filename, "rb");
 	if (!fp) {
 		fprintf(stderr, "fopen[%s:%d].\n", __FILE__, __LINE__);

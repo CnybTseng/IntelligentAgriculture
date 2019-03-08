@@ -1,6 +1,7 @@
 #include <omp.h>
 #include <math.h>
 #include <sys/time.h>
+#include <string.h>
 #ifdef __INTEL_SSE__
 #	include <emmintrin.h>
 #	include <tmmintrin.h>
@@ -18,9 +19,43 @@
 #ifdef MERGE_BATCHNORM_TO_CONV
 static void merge_batchnorm_params(convolutional_layer *layer);
 #endif
+
 #ifdef NNPACK
 static void forward_convolutional_layer_nnp(void *_layer, znet *net);
 #endif
+
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+static void forward_convolutional_layer_gpu(void *_layer, znet *net);
+#endif
+
+#ifdef OPENCL
+extern cl_wrapper wrapper;
+cl_mem d_input;
+struct direct_convolution_context {
+	cl_program program;
+	cl_kernel kernel;
+	cl_mem d_input;
+	cl_mem d_weights;
+	cl_mem d_biases;
+	cl_mem d_output;
+	int nfilters;
+	int input_channel_blocks;
+	int output_channel_blocks;
+	int weight_image_width;
+	int weight_image_height;
+	int bias_image_width;
+	int input_image_width;
+	int input_image_height;
+	int output_image_width;
+	int output_image_height;
+};
+
+void load_direct_convolution_weight(direct_convolution_context *context, float *weights, float *biases);
+direct_convolution_context *create_direct_convolution_context(convolutional_layer *layer);
+void forward_convolutional_layer_1x1(convolutional_layer *layer);
+void free_direct_convolution_context(direct_convolution_context *context);
+#endif
+
 #ifdef __INTEL_SSE__
 static void add_bias_sse(float *output, float *biases, int batch_size, int nchannels, int size);
 static void mul_bias_sse(float *output, float *scales, int batch_size, int nchannels, int size);
@@ -56,7 +91,6 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->vmsize = input_size.c * filter_size * filter_size * layer->output_size.w * layer->output_size.h;
 	layer->noutputs = layer->output_size.w * layer->output_size.h * nfilters;
 	layer->weights = NULL;
-	layer->transformed_weights = NULL;
 	layer->scales = NULL;
 	layer->biases = NULL;
 	layer->rolling_mean = NULL;
@@ -69,25 +103,57 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 	layer->transformed_kernel_size = 0;
 	layer->transformed_kernel = NULL;
 #endif
+#if defined(OPENCL)
+#ifdef WINOGRAD_CONVOLUTION
+	layer->wtc = NULL;
+	layer->itc = NULL;
+	layer->mmc = NULL;
+	layer->oitc = NULL;
+#endif
+	layer->dcc = NULL;
+#endif
 	
 	if (output_size) {
 		*output_size = layer->output_size;
 	}
-	
+
 	layer->weights = calloc(layer->nweights, sizeof(float));
 	if (!layer->weights) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
-	
+
+#if defined(OPENCL)
+#ifdef 	WINOGRAD_CONVOLUTION
 	if (3 == filter_size) {
-		const int transformed_size = get_image_tile_size(F6x6_3x3);
-		layer->transformed_weights = calloc(transformed_size * transformed_size * input_size.c * nfilters, sizeof(float));
-		if (!layer->transformed_weights) {
-			fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
+		layer->wtc = create_weight_transform_context(F4x4_3x3, input_size.c, nfilters);
+		if (!layer->wtc) {
+			goto cleanup;
+		}
+		
+		layer->itc = create_input_transform_context(F4x4_3x3, input_size.w, input_size.h, input_size.c, stride, padding);
+		if (!layer->itc) {
+			goto cleanup;
+		}
+		
+		layer->mmc =create_matrix_multiplication_context(layer->wtc, layer->itc);
+		if (!layer->mmc) {
+			goto cleanup;
+		}
+		
+		layer->oitc = create_output_inverse_transform_context(layer->mmc, activation);
+		if (!layer->oitc) {
 			goto cleanup;
 		}
 	}
+#endif
+	if (1 == filter_size) {
+		layer->dcc = create_direct_convolution_context(layer);
+		if (!layer->dcc) {
+			goto cleanup;
+		}
+	}
+#endif
 	
 	layer->scales = calloc(nfilters, sizeof(float));
 	if (!layer->scales) {
@@ -139,11 +205,6 @@ void free_convolution_layer(void *_layer)
 		layer->weights = NULL;
 	}
 	
-	if (3 == layer->filter_size && layer->transformed_weights) {
-		free(layer->transformed_weights);
-		layer->transformed_weights = NULL;
-	}
-	
 	if (layer->scales) {
 		free(layer->scales);
 		layer->scales = NULL;
@@ -179,7 +240,20 @@ void free_convolution_layer(void *_layer)
 		free(layer->transformed_kernel);
 		layer->transformed_kernel = NULL;
 	}
-#endif	
+#endif
+#if defined(OPENCL)
+#ifdef WINOGRAD_CONVOLUTION
+	if (3 == layer->filter_size) {
+		free_weight_transform_context(layer->wtc);
+		free_input_transform_context(layer->itc);
+		free_matrix_multiplication_context(layer->mmc);
+		free_output_inverse_transform_context(layer->oitc);
+	}
+#endif
+	if (1 == layer->filter_size) {
+		free_direct_convolution_context(layer->dcc);
+	}
+#endif
 	
 	free(layer);
 	layer = NULL;
@@ -208,24 +282,51 @@ void print_convolutional_layer_info(void *_layer, int id)
 		total_bflop);
 }
 
-void set_convolutional_layer_input(void *_layer, float *input)
+void set_convolutional_layer_input(void *_layer, void *input)
 {
 	convolutional_layer *layer = (convolutional_layer *)_layer;
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	layer->input = input;
+#else
+	if (3 == layer->filter_size) {
+		set_winograd_convolution_input(layer->itc, input);d_input = input;
+	} else if (1 == layer->filter_size) {
+		layer->dcc->d_input = input;
+	}
+#endif
 }
 
-float *get_convolutional_layer_output(void *_layer)
+void *get_convolutional_layer_output(void *_layer)
 {
 	convolutional_layer *layer = (convolutional_layer *)_layer;
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	return layer->output;
+#else
+	if (3 == layer->filter_size) {
+		return get_winograd_convolution_output(layer->oitc);
+	} else if (1 == layer->filter_size) {
+		return layer->dcc->d_output;
+	}
+	return NULL;
+#endif
 }
 
 void forward_convolutional_layer(void *_layer, znet *net)
 {
 #ifdef NNPACK
-	return forward_convolutional_layer_nnp(_layer, net);
-#endif	
+	return forward_convolutional_layer_nnp(_layer, net); 
+#endif
 	convolutional_layer *layer = (convolutional_layer *)_layer;
+	if (3 == layer->filter_size) {
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+		return forward_convolutional_layer_gpu(_layer, net);
+#endif		
+	} else if (1 == layer->filter_size) {
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+		return forward_convolutional_layer_1x1(layer);
+#endif
+	} else {;}
+	
 	float alpha = 0;
 	size_t size = layer->noutputs * layer->batch_size * sizeof(float);
 	mset((char *const)layer->output, size, (const char *const)&alpha, sizeof(float));
@@ -286,6 +387,15 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 #ifdef MERGE_BATCHNORM_TO_CONV
 	if (layer->batch_norm) merge_batchnorm_params(layer);
 #endif
+	if (3 == layer->filter_size) {
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+		transform_weight(layer->wtc, layer->weights, layer->biases, NULL);
+#endif
+	} else if (1 == layer->filter_size) {
+#ifdef OPENCL
+		load_direct_convolution_weight(layer->dcc, layer->weights, layer->biases);
+#endif
+	} else {;}
 }
 
 int convolutional_output_width(convolutional_layer *layer)
@@ -376,6 +486,9 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 	for (int i = 0; i < 2048; ++i) zeros[i] = 0;
 
 	if (3 != layer->filter_size) {
+		static double total = 0;
+		struct timeval t1, t2; 
+		gettimeofday(&t1, NULL);
 		nnp_convolution_inference(
 			nnp_convolution_algorithm_direct,
 			nnp_convolution_transform_strategy_tuple_based,
@@ -396,6 +509,10 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			znet_threadpool(net),
 			NULL
 		);
+		gettimeofday(&t2, NULL);
+		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
+		total += duration;
+		printf("nnp_convolution_algorithm_direct: %f ms, total %f ms.\n", duration, total);
 	} else {
 		if (NULL == layer->transformed_kernel) {
 			nnp_convolution_inference(
@@ -469,7 +586,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 		gettimeofday(&t2, NULL);
 		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 		total += duration;
-		printf("nnp_convolution_inference: %f ms, total %f ms.\n", duration, total);
+		printf("nnp_convolution_algorithm_wt8x8_fp16: %f ms, total %f ms.\n", duration, total);
 	}
 
 #ifndef MERGE_BATCHNORM_TO_CONV	
@@ -483,6 +600,219 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 #endif
 	
 	activate(layer->output, layer->noutputs * layer->batch_size, layer->activation);
+}
+#endif
+
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+void forward_convolutional_layer_gpu(void *_layer, znet *net)
+{
+	convolutional_layer *layer = (convolutional_layer *)_layer;
+	float *transformed_input = NULL;
+	float *inverse_transformed_output = NULL;	
+	transform_input(layer->itc, transformed_input);	
+	multiply_transformed_matrix(layer->mmc, NULL);
+	inverse_transform_output(layer->oitc, inverse_transformed_output);
+}
+#endif
+
+#ifdef OPENCL
+void get_direct_convolution_output_image_size(convolutional_layer *layer, int *width, int *height)
+{
+	if (layer) {
+		*width = layer->dcc->output_image_width;
+		*height = layer->dcc->output_image_height;
+	} else {
+		*width = 0;
+		*height = 0;
+	}
+}
+
+void load_direct_convolution_weight(direct_convolution_context *context, float *weights, float *biases)
+{	
+	cl_event event;
+	cl_int errcode;
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {context->weight_image_width, context->weight_image_height, 1};
+	size_t image_row_pitch, image_slice_pitch;
+	float *h_weights = clEnqueueMapImage(wrapper.command_queue, context->d_weights, CL_TRUE, CL_MAP_WRITE,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	image_row_pitch = image_row_pitch >> 2;
+	const int buffer_row_pitch = context->input_channel_blocks << 2;
+	for (int y = 0; y < context->weight_image_height; ++y) {
+		for (int x = 0; x < context->input_channel_blocks; ++x) {
+			float *ptr = h_weights + y * image_row_pitch + (x << 4);
+			for (int z = 0; z < 4; ++z) {
+#if 0
+				ptr[(z << 2) + 0] = weights[((y << 2) + z) * buffer_row_pitch + (x << 2) + 0];
+				ptr[(z << 2) + 1] = weights[((y << 2) + z) * buffer_row_pitch + (x << 2) + 1];
+				ptr[(z << 2) + 2] = weights[((y << 2) + z) * buffer_row_pitch + (x << 2) + 2];
+				ptr[(z << 2) + 3] = weights[((y << 2) + z) * buffer_row_pitch + (x << 2) + 3];
+#else
+				ptr[(z << 2) + 0] = weights[((y << 2) + 0) * buffer_row_pitch + (x << 2) + z];
+				ptr[(z << 2) + 1] = weights[((y << 2) + 1) * buffer_row_pitch + (x << 2) + z];
+				ptr[(z << 2) + 2] = weights[((y << 2) + 2) * buffer_row_pitch + (x << 2) + z];
+				ptr[(z << 2) + 3] = weights[((y << 2) + 3) * buffer_row_pitch + (x << 2) + z];
+#endif
+			}
+		}
+	}
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_weights, h_weights, 0, NULL, &event);
+	
+	region[0] = context->bias_image_width;
+	region[1] = 1;
+	float *h_biases = clEnqueueMapImage(wrapper.command_queue, context->d_biases, CL_TRUE, CL_MAP_WRITE, origin,
+		region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	memcpy(h_biases, biases, image_row_pitch);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_biases, h_biases, 0, NULL, &event);
+}
+
+direct_convolution_context *create_direct_convolution_context(convolutional_layer *layer)
+{
+	direct_convolution_context *context = calloc(1, sizeof(direct_convolution_context));
+	if (!context) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		return context;
+	}
+	
+	context->program = 0;
+	context->kernel = 0;
+	context->d_input = 0;
+	context->d_weights = 0;
+	context->d_biases = 0;
+	context->d_output = 0;
+	context->nfilters = layer->nfilters;
+	context->input_channel_blocks = round_up_division_4(layer->input_size.c);
+	context->weight_image_width = context->input_channel_blocks << 2;
+	context->weight_image_height = round_up_division_4(layer->nfilters);
+	context->bias_image_width = layer->nfilters;
+	context->input_image_width = layer->input_size.w * context->input_channel_blocks;
+	context->input_image_height = layer->input_size.h;
+	context->output_channel_blocks = round_up_division_4(layer->output_size.c);
+	context->output_image_width = layer->output_size.w * context->output_channel_blocks;
+	context->output_image_height = layer->output_size.h;
+	
+	char options[256] = "-cl-fast-relaxed-math";
+	switch (layer->activation) {
+	case RELU:
+		strcat(options, " -DRELU");
+		break;
+	case LEAKY:
+		strcat(options, " -DLEAKY");
+		break;
+	case LINEAR:
+		strcat(options, " -DLINEAR");
+		break;
+	case LOGISTIC:
+		strcat(options, " -DLOGISTIC");
+		break;
+	default:
+		strcat(options, " -DLINEAR");
+		break;
+	}
+
+	cl_int errcode;
+	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "direct_convolution_2d_1x1", &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = context->weight_image_width;
+	image_desc.image_height = context->weight_image_height;
+	
+	context->d_weights = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE1D;
+	image_desc.image_width = context->bias_image_width;
+	
+	context->d_biases = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = context->output_image_width;
+	image_desc.image_height = context->output_image_height;
+	
+	context->d_output = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		cleanup:free_direct_convolution_context(context);
+		return 0;
+	}
+	
+	return context;
+}
+
+void forward_convolutional_layer_1x1(convolutional_layer *layer)
+{
+	cl_int errcode;
+	int flag = 1;
+	if (layer->activation == LINEAR) flag = 0;
+	direct_convolution_context *context = layer->dcc;
+	errcode  = clSetKernelArg(context->kernel, 0, sizeof(cl_mem), &context->d_weights);
+	errcode |= clSetKernelArg(context->kernel, 1, sizeof(cl_mem), &context->d_input);
+	errcode |= clSetKernelArg(context->kernel, 2, sizeof(cl_mem), &context->d_biases);
+	errcode |= clSetKernelArg(context->kernel, 3, sizeof(cl_mem), &context->d_output);
+	errcode |= clSetKernelArg(context->kernel, 4, sizeof(int), &layer->output_size.w);
+	errcode |= clSetKernelArg(context->kernel, 5, sizeof(int), &context->input_channel_blocks);
+	errcode |= clSetKernelArg(context->kernel, 6, sizeof(int), &flag);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		return;
+	}
+	
+	cl_event event;
+	cl_uint work_dim = 3;
+	size_t global_work_size[] = {context->output_channel_blocks, round_up_division_4(layer->output_size.w),
+		layer->output_size.h};
+	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
+		NULL, 0, NULL, &event);
+
+#ifdef CL_PROFILING_ENABLE	
+	cl_ulong start, end;
+	clFinish(wrapper.command_queue);
+	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
+	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
+	float duration = (end - start) * 1e-6f;
+	printf("GPU, direct_convolution_1x1: %fms.\n", duration);
+#endif
+	clReleaseEvent(event);
+}
+
+void free_direct_convolution_context(direct_convolution_context *context)
+{
+	if (context) {
+		clReleaseMemObject(context->d_biases);
+		clReleaseMemObject(context->d_weights);
+		clReleaseMemObject(context->d_output);
+		clReleaseProgram(context->program);
+		clReleaseKernel(context->kernel);
+		free(context);
+	}
 }
 #endif
 

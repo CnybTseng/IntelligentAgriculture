@@ -8,6 +8,11 @@ extern "C"
 {
 #endif
 
+#ifdef OPENCL
+struct maxpool_gpu_context;
+typedef struct maxpool_gpu_context maxpool_gpu_context;
+#endif
+
 typedef struct {
 	LAYER_TYPE type;
 	dim3 input_size;
@@ -20,12 +25,15 @@ typedef struct {
 	int noutputs;
 	float *input;
 	float *output;
+#ifdef OPENCL
+	maxpool_gpu_context *mpgc;
+#endif
 } maxpool_layer;
 
 void free_maxpool_layer(void *_layer);
 void print_maxpool_layer_info(void *_layer, int id);
-void set_maxpool_layer_input(void *_layer, float *input);
-float *get_maxpool_layer_output(void *_layer);
+void set_maxpool_layer_input(void *_layer, void *input);
+void *get_maxpool_layer_output(void *_layer);
 void forward_maxpool_layer(void *_layer, znet *net);
 void backward_maxpool_layer(maxpool_layer *layer, znet *net);
 int maxpool_output_width(maxpool_layer *layer);

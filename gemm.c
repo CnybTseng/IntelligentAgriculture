@@ -35,13 +35,13 @@ static void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
 extern cl_wrapper wrapper;
 void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc);
-void gemm_nn_cl_v1(int m, int n, int k, float alpha, float *A, int lda,
+void gemm_nn_cl_sm(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc);
-void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
+void gemm_nn_cl_tp(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc);
 #ifdef __linux__
-void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
-                   float *B, int ldb, float beta, float *C, int ldc);
+void gemm_nn_cl_ion(int m, int n, int k, float alpha, float *A, int lda,
+                    float *B, int ldb, float beta, float *C, int ldc);
 #endif
 void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,				
                 float *B, int ldb, float beta, float *C, int ldc);				
@@ -119,14 +119,7 @@ void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
 		}
 	}
 #else
-	static double total = 0;
-	struct timeval t1, t2; 
-    gettimeofday(&t1, NULL);
 	gemm_nn_cl(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
-	gettimeofday(&t2, NULL);
-	double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
-	total += duration;
-	printf("gemm_nn: %f ms, total %f ms.\n", duration, total);
 #endif
 }
 			 
@@ -177,163 +170,6 @@ void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
 #endif	
 
 #ifdef OPENCL
-#if 0
-void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
-                float *B, int ldb, float beta, float *C, int ldc)
-{	
-	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		return;
-	}
-	
-	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_8x8", &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		return;
-	}
-	
-	cl_kernel common_kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_common", &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		return;
-	}
-	
-	cl_mem d_A = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
-		m * k * sizeof(float), NULL, &errcode);
-
-	cl_mem d_B = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
-		k * n * sizeof(float), NULL, &errcode);
-
-	cl_mem d_C = clCreateBuffer(wrapper.context, CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
-		m * n * sizeof(float), NULL, &errcode);
-
-	float *h_A = clEnqueueMapBuffer(wrapper.command_queue, d_A, CL_TRUE, CL_MAP_WRITE,
-		0, m * k * sizeof(float), 0, NULL, NULL, &errcode);
-	// memcpy(h_A, A, m * k * sizeof(float));
-	for (int y = 0; y < m; ++y) {
-		for (int x = 0; x < k; ++x) {
-			h_A[y * k + x] = A[y * k + x];
-		}
-	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_A, h_A, 0, NULL, NULL);
-	
-	float *h_B = clEnqueueMapBuffer(wrapper.command_queue, d_B, CL_TRUE, CL_MAP_WRITE,
-		0, k * n * sizeof(float), 0, NULL, NULL, &errcode);
-	// memcpy(h_B, B, k * n * sizeof(float));
-	for (int y = 0; y < k; ++y) {
-		for (int x = 0; x < n; ++x) {
-			h_B[y * n + x] = B[y * n + x];
-		}
-	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_B, h_B, 0, NULL, NULL);
-	
-	float *h_C = clEnqueueMapBuffer(wrapper.command_queue, d_C, CL_TRUE, CL_MAP_WRITE,
-		0, m * n * sizeof(float), 0, NULL, NULL, &errcode);
-	// memcpy(h_C, C, m * n * sizeof(float));
-	for (int y = 0; y < m; ++y) {
-		for (int x = 0; x < n; ++x) {
-			h_C[y * n + x] = C[y * n + x];
-		}
-	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_C, h_C, 0, NULL, NULL);
-	
-	errcode  = clSetKernelArg(kernel, 0, sizeof(int), &m);
-	errcode |= clSetKernelArg(kernel, 1, sizeof(int), &n); 
-	errcode |= clSetKernelArg(kernel, 2, sizeof(int), &k); 
-	errcode |= clSetKernelArg(kernel, 3, sizeof(float), &alpha);
-	errcode |= clSetKernelArg(kernel, 4, sizeof(cl_mem), &d_A); 
-	errcode |= clSetKernelArg(kernel, 5, sizeof(int), &lda); 
-	errcode |= clSetKernelArg(kernel, 6, sizeof(cl_mem), &d_B); 
-	errcode |= clSetKernelArg(kernel, 7, sizeof(int), &ldb);
-	errcode |= clSetKernelArg(kernel, 8, sizeof(float), &beta);
-	errcode |= clSetKernelArg(kernel, 9, sizeof(cl_mem), &d_C); 
-	errcode |= clSetKernelArg(kernel, 10, sizeof(int), &ldc); 
-	
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clSetKernelArg fail!\n");
-		return;
-	}
-	
-	errcode  = clSetKernelArg(common_kernel, 0, sizeof(int), &m);
-	errcode |= clSetKernelArg(common_kernel, 1, sizeof(int), &n); 
-	errcode |= clSetKernelArg(common_kernel, 2, sizeof(int), &k); 
-	errcode |= clSetKernelArg(common_kernel, 3, sizeof(float), &alpha);
-	errcode |= clSetKernelArg(common_kernel, 4, sizeof(cl_mem), &d_A); 
-	errcode |= clSetKernelArg(common_kernel, 5, sizeof(int), &lda); 
-	errcode |= clSetKernelArg(common_kernel, 6, sizeof(cl_mem), &d_B); 
-	errcode |= clSetKernelArg(common_kernel, 7, sizeof(int), &ldb);
-	errcode |= clSetKernelArg(common_kernel, 8, sizeof(float), &beta);
-	errcode |= clSetKernelArg(common_kernel, 9, sizeof(cl_mem), &d_C); 
-	errcode |= clSetKernelArg(common_kernel, 10, sizeof(int), &ldc); 
-	
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clSetKernelArg fail!\n");
-		return;
-	}
-	
-	const int tile_rows = 8;
-	const int tile_cols = 8;
-	const int _m = (m / tile_rows) * tile_rows;
-	const int _n = (n / tile_cols) * tile_cols;
-	
-	cl_event event;
-	cl_uint work_dim = 2;
-	
-	if (_m && _n) {
-		size_t global_work_size[] = {_n >> 3, _m >> 3};
-		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
-			NULL, 0, NULL, &event);
-		
-		if (n != _n) {
-			size_t global_work_offset[] = {_n, 0};
-			size_t global_work_size[] = {n - _n, _m};
-			errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, global_work_offset,
-				global_work_size, NULL, 0, NULL, &event);
-		}
-		
-		if (m != _m) {
-			size_t global_work_offset[] = {0, _m};
-			size_t global_work_size[] = {n, m - _m};
-			errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, global_work_offset,
-				global_work_size, NULL, 0, NULL, &event);
-		}
-	} else {
-		size_t global_work_size[] = {n, m};
-		errcode = clEnqueueNDRangeKernel(wrapper.command_queue, common_kernel, work_dim, NULL,
-			global_work_size, NULL, 0, NULL, &event);
-	}
-
-#ifdef CL_PROFILING_ENABLE	
-	cl_ulong start, end;
-	clFinish(wrapper.command_queue);
-	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
-	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	clReleaseEvent(event);
-	printf("gemm_nn_cl(|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, (end - start) * 1e-6f);
-#endif
-
-	h_C = clEnqueueMapBuffer(wrapper.command_queue, d_C, CL_TRUE, CL_MAP_READ,
-		0, m * n * sizeof(float), 0, NULL, NULL, &errcode);
-	// memcpy(C, h_C, m * n * sizeof(float));
-	for (int y = 0; y < m; ++y) {
-		for (int x = 0; x < n; ++x) {
-			C[y * n + x] = h_C[y * n + x];
-		}
-	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_C, h_C, 0, NULL, NULL);
-
-	clReleaseMemObject(d_A);
-	clReleaseMemObject(d_B);
-	clReleaseMemObject(d_C);
-
-	clReleaseProgram(program);
-	clReleaseKernel(kernel);
-	clReleaseKernel(common_kernel);
-}
-#else
 void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {	
@@ -466,10 +302,9 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 	clReleaseProgram(program);
 	clReleaseKernel(kernel);
 }
-#endif
 
-void gemm_nn_cl_v1(int m, int n, int k, float alpha, float *A, int lda,
-                float *B, int ldb, float beta, float *C, int ldc)
+void gemm_nn_cl_sm(int m, int n, int k, float alpha, float *A, int lda,
+                   float *B, int ldb, float beta, float *C, int ldc)
 {	
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
@@ -479,7 +314,7 @@ void gemm_nn_cl_v1(int m, int n, int k, float alpha, float *A, int lda,
 		return;
 	}
 	
-	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_desktop_gpu", &errcode);
+	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_sm", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -588,7 +423,7 @@ void gemm_nn_cl_v1(int m, int n, int k, float alpha, float *A, int lda,
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	clReleaseEvent(event);
-	printf("gemm_nn_cl_v1: %f ms.\n", (end - start) * 1e-6f);
+	printf("gemm_nn_cl_sm: %f ms.\n", (end - start) * 1e-6f);
 #endif
 
 	h_C = clEnqueueMapBuffer(wrapper.command_queue, d_C, CL_TRUE, CL_MAP_READ,
@@ -605,7 +440,7 @@ void gemm_nn_cl_v1(int m, int n, int k, float alpha, float *A, int lda,
 	clReleaseKernel(common_kernel);
 }
 
-void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
+void gemm_nn_cl_tp(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
@@ -616,7 +451,7 @@ void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
 		return;
 	}
 	
-	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_8x4_f4", &errcode);
+	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_8x4_tp", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -728,7 +563,7 @@ void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	clReleaseEvent(event);
-	printf("gemm_nn_cl_v2(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
+	printf("gemm_nn_cl_tp(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
 #endif
 		
 	h_C = clEnqueueMapBuffer(wrapper.command_queue, d_C, CL_TRUE, CL_MAP_WRITE, 0,
@@ -750,8 +585,8 @@ void gemm_nn_cl_v2(int m, int n, int k, float alpha, float *A, int lda,
 }
 
 #ifdef __linux__
-void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
-                   float *B, int ldb, float beta, float *C, int ldc)
+void gemm_nn_cl_ion(int m, int n, int k, float alpha, float *A, int lda,
+                    float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
@@ -767,13 +602,10 @@ void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
 		return;
 	}
 	
-	
-	
-	
-	
 	cl_image_format image_a_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT};
+		.image_channel_data_type = CL_FLOAT
+	};
 	
 	cl_image_desc image_a_desc;
 	memset(&image_a_desc, 0, sizeof(cl_image_desc));
@@ -810,10 +642,6 @@ void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
 	
 	cl_event event;
 	clEnqueueUnmapMemObject(wrapper.command_queue, image_a, image_a_ptr, 0, NULL, &event);
-	
-	
-	
-	
 	
 	cl_image_format image_b_format = {
 		.image_channel_order = CL_RGBA,
@@ -854,10 +682,6 @@ void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
 	
 	clEnqueueUnmapMemObject(wrapper.command_queue, image_b, image_b_ptr, 0, NULL, &event);
 	
-	
-	
-	
-	
 	cl_image_format image_c_format = {
 		.image_channel_order = CL_RGBA,
 		.image_channel_data_type = CL_FLOAT};
@@ -874,27 +698,15 @@ void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
 	mem_flags = CL_MEM_WRITE_ONLY | CL_MEM_USE_HOST_PTR | CL_MEM_EXT_HOST_PTR_QCOM;	
 	cl_mem image_c = clCreateImage(wrapper.context, mem_flags, &image_c_format, &image_c_desc, &ion_context_c.ion_mem, &errcode);
 	
-	
-
-	
-	
 	errcode  = clSetKernelArg(kernel, 0, sizeof(cl_mem), &image_a); 
 	errcode |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &image_b); 
 	errcode |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &image_c); 
 	errcode |= clSetKernelArg(kernel, 3, sizeof(cl_int), &k); 
 	
-	
-	
-	
-	
 	cl_uint work_dim = 2;
 	size_t global_work_size[] = {image_b_desc.image_width, image_a_desc.image_height / 8};
-	// size_t local_work_size[]  = {32, 16};
 	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
-	
-	
-	
 	
 #ifdef CL_PROFILING_ENABLE	
 	cl_ulong start, end;
@@ -902,13 +714,8 @@ void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	clReleaseEvent(event);
-	printf("gemm_nn_cl_v3: %f ms.\n", (end - start) * 1e-6f);
+	printf("gemm_nn_cl_ion: %f ms.\n", (end - start) * 1e-6f);
 #endif	
-	
-	
-	
-	
-	
 	
 	size_t image_c_origin[] = {0, 0, 0};
 	size_t image_c_region[] = {image_c_desc.image_width, image_c_desc.image_height, 1};
@@ -924,10 +731,6 @@ void gemm_nn_cl_v3(int m, int n, int k, float alpha, float *A, int lda,
 	}
 	
 	clEnqueueUnmapMemObject(wrapper.command_queue, image_a, image_a_ptr, 0, NULL, &event);
-	
-	
-	
-	
 	
 	cl_free_ion_context(wrapper, ion_context_a);
 	cl_free_ion_context(wrapper, ion_context_b);

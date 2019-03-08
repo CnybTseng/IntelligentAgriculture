@@ -12,8 +12,8 @@
 #include "yolo_layer.h"
 
 typedef void (*print_layer_info_t)(void *layer, int id);
-typedef void (*set_layer_input_t)(void *layer, float *input);
-typedef float *(*get_layer_output_t)(void *layer);
+typedef void (*set_layer_input_t)(void *layer, void *input);
+typedef void *(*get_layer_output_t)(void *layer);
 typedef void (*forward_t)(void *layer, znet *net);
 typedef void (*free_layer_t)(void *layer);
 
@@ -34,6 +34,9 @@ struct znet {
 	char weight_filename[256];
 #ifdef NNPACK
 	pthreadpool_t threadpool;
+#endif
+#ifdef OPENCL
+	cl_mem d_input;
 #endif
 };
 
@@ -126,12 +129,23 @@ void znet_train(znet *net, data_store *ds, train_options *opts)
 float *znet_inference(znet *net, image *input)
 {
 	net->work_mode = INFERENCE;
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	net->input = input->data;
-	
+#else
+	net->d_input = input->d_data;
+#endif	
 	for (int i = 0; i < net->nlayers; ++i) {
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 		net->set_layer_input[i](net->layers[i], net->input);
+#else
+		net->set_layer_input[i](net->layers[i], net->d_input);
+#endif
 		net->forward[i](net->layers[i], net);
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 		net->input = net->get_layer_output[i](net->layers[i]);
+#else
+		net->d_input = net->get_layer_output[i](net->layers[i]);
+#endif
 	}
 
 	return 0;

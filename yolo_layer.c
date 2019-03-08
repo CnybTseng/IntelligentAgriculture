@@ -6,6 +6,10 @@
 #include "zutils.h"
 #include "list.h"
 
+#ifdef OPENCL
+extern cl_wrapper wrapper;
+#endif
+
 static box get_yolo_box(float *box_volume, int id, int layer_width, int layer_height,
                         int net_width, int net_height, int *anchor_box,
 						int image_width, int image_height);
@@ -91,13 +95,17 @@ void print_yolo_layer_info(void *_layer, int id)
 	printf("%02d\tyolo\n", id);
 }
 
-void set_yolo_layer_input(void *_layer, float *input)
+void set_yolo_layer_input(void *_layer, void *input)
 {
 	yolo_layer *layer = (yolo_layer *)_layer;
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	layer->input = input;
+#else
+	layer->d_input = input;
+#endif
 }
 
-float *get_yolo_layer_output(void *_layer)
+void *get_yolo_layer_output(void *_layer)
 {
 	yolo_layer *layer = (yolo_layer *)_layer;
 	return layer->output;
@@ -106,9 +114,25 @@ float *get_yolo_layer_output(void *_layer)
 void forward_yolo_layer(void *_layer, znet *net)
 {
 	yolo_layer *layer = (yolo_layer *)_layer;
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	int total = layer->ninputs * layer->batch_size;
 	memcpy(layer->output, layer->input, total * sizeof(float));
-	
+#else
+	cl_int errcode;
+	cl_event event;
+	size_t origin[] = {0, 0, 0};
+	size_t input_image_width, input_image_height;
+	clGetImageInfo(layer->d_input, CL_IMAGE_WIDTH, sizeof(size_t), &input_image_width, NULL);
+	clGetImageInfo(layer->d_input, CL_IMAGE_HEIGHT, sizeof(size_t), &input_image_height, NULL);
+	size_t region[] = {input_image_width, input_image_height, 1};
+	size_t image_row_pitch, image_slice_pitch;
+	float *h_input = clEnqueueMapImage(wrapper.command_queue, layer->d_input, CL_TRUE, CL_MAP_WRITE,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	image_row_pitch = image_row_pitch >> 2;
+	nhwc_to_nchw_quad(h_input, layer->output, layer->output_size.w, layer->output_size.h,
+		layer->output_size.c, 1, image_row_pitch, layer->output_size.w);
+	clEnqueueUnmapMemObject(wrapper.command_queue, layer->d_input, h_input, 0, NULL, &event);
+#endif
 	int volume_per_scale = layer->output_size.w * layer->output_size.h * (4 + 1 + layer->classes);
 	if (znet_workmode(net) == INFERENCE) {
 		for (int b = 0; b < layer->batch_size; ++b) {

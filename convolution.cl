@@ -319,3 +319,97 @@ void inverse_output_transform_f4x4_3x3(__read_only image2d_t output, __read_only
 		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y + 3), AToutA[12 + i]);
 	}
 }
+
+__kernel
+void direct_convolution_2d_1x1(__read_only image2d_t weight, __read_only image2d_t input,
+	__read_only image1d_t biases, write_only image2d_t output, __private const int width,
+	__private const int input_channel_blocks, __private const int leaky_or_linear)
+{
+	int output_channel_block_id = get_global_id(0);
+	int output_pixel_block_id = get_global_id(1);
+	int pixel_y = get_global_id(2);
+
+	float4 w[4];
+	float4 x[4];
+	float4 y[4];
+	
+	y[0] = read_imagef(biases, output_channel_block_id);
+	y[1] = y[0];
+	y[2] = y[0];
+	y[3] = y[0];
+	
+	int4 input_pixel_block_x;
+	input_pixel_block_x.x = output_pixel_block_id << 2;
+	input_pixel_block_x.y = input_pixel_block_x.x + 1;
+	input_pixel_block_x.z = input_pixel_block_x.y + 1;
+	input_pixel_block_x.w = input_pixel_block_x.z + 1;
+	
+	input_pixel_block_x.x = select(input_pixel_block_x.x, -1, input_pixel_block_x.x >= width);
+	input_pixel_block_x.y = select(input_pixel_block_x.y, -1, input_pixel_block_x.y >= width);
+	input_pixel_block_x.z = select(input_pixel_block_x.z, -1, input_pixel_block_x.z >= width);
+	input_pixel_block_x.w = select(input_pixel_block_x.w, -1, input_pixel_block_x.w >= width);
+	
+	int input_row_start = 0;
+	int weight_row_start = 0;
+	for (int i = 0; i < input_channel_blocks; i++) {		
+		w[0] = read_imagef(weight, (int2)(weight_row_start, output_channel_block_id));
+		w[1] = read_imagef(weight, (int2)(weight_row_start + 1, output_channel_block_id));
+		w[2] = read_imagef(weight, (int2)(weight_row_start + 2, output_channel_block_id));
+		w[3] = read_imagef(weight, (int2)(weight_row_start + 3, output_channel_block_id));
+		
+		x[0] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.x, pixel_y));
+		x[1] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.y, pixel_y));
+		x[2] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.z, pixel_y));
+		x[3] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.w, pixel_y));
+#if 0		
+		y[0] += (float4)(dot(w[0], x[0]), dot(w[1], x[0]), dot(w[2], x[0]), dot(w[3], x[0]));
+		y[1] += (float4)(dot(w[0], x[1]), dot(w[1], x[1]), dot(w[2], x[1]), dot(w[3], x[1]));
+		y[2] += (float4)(dot(w[0], x[2]), dot(w[1], x[2]), dot(w[2], x[2]), dot(w[3], x[2]));
+		y[3] += (float4)(dot(w[0], x[3]), dot(w[1], x[3]), dot(w[2], x[3]), dot(w[3], x[3]));
+#else
+		y[0] = mad(x[0].x, w[0], y[0]);
+		y[0] = mad(x[0].y, w[1], y[0]);
+		y[0] = mad(x[0].z, w[2], y[0]);
+		y[0] = mad(x[0].w, w[3], y[0]);
+		
+		y[1] = mad(x[1].x, w[0], y[1]);
+		y[1] = mad(x[1].y, w[1], y[1]);
+		y[1] = mad(x[1].z, w[2], y[1]);
+		y[1] = mad(x[1].w, w[3], y[1]);
+		
+		y[2] = mad(x[2].x, w[0], y[2]);
+		y[2] = mad(x[2].y, w[1], y[2]);
+		y[2] = mad(x[2].z, w[2], y[2]);
+		y[2] = mad(x[2].w, w[3], y[2]);
+		
+		y[3] = mad(x[3].x, w[0], y[3]);
+		y[3] = mad(x[3].y, w[1], y[3]);
+		y[3] = mad(x[3].z, w[2], y[3]);
+		y[3] = mad(x[3].w, w[3], y[3]);
+#endif		
+		input_row_start += width;
+		weight_row_start += 4;
+	}
+	
+	const int output_row_start = output_channel_block_id * width;
+	
+	int output_pixel_x = output_pixel_block_id << 2;
+	if (output_pixel_x >= width) return;
+	if (leaky_or_linear) y[0] = select(0.1f * y[0], y[0], y[0] > (float4)(0));
+	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[0]);
+	
+	output_pixel_x++;
+	if (output_pixel_x >= width) return;
+	if (leaky_or_linear) y[1] = select(0.1f * y[1], y[1], y[1] > (float4)(0));
+	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[1]);
+	
+	output_pixel_x++;
+	if (output_pixel_x >= width) return;
+	if (leaky_or_linear) y[2] = select(0.1f * y[2], y[2], y[2] > (float4)(0));
+	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[2]);
+	
+	output_pixel_x++;
+	if (output_pixel_x >= width) return;
+	if (leaky_or_linear) y[3] = select(0.1f * y[3], y[3], y[3] > (float4)(0));
+	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[3]);
+}

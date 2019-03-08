@@ -49,6 +49,7 @@ void test_resize_faster(int argc, char *argv[]);
 #endif
 #ifdef OPENCL
 cl_wrapper wrapper;
+extern void load_direct_convolution_weight(direct_convolution_context *context, float *weights, float *biases);
 #endif
 extern void resize_image_hv(unsigned char *src, unsigned char *dst, int src_w, int src_h,
                             int dst_w, int dst_h, int nchannels);
@@ -79,10 +80,15 @@ void test_winograd_input_transformation(int argc, char *argv[]);
 void test_winograd_convolution(int argc, char *argv[]);
 void test_normalize_image_with_gpu(int argc, char *argv[]);
 void test_maxpool_layer_with_gpu(int argc, char *argv[]);
+void test_direct_convolution(int argc, char *argv[]);
+void test_resample_layer_with_gpu(int argc, char *argv[]);
+void test_nhwc_to_nchw_quad(int argc, char *argv[]);
+void test_image_standardizer(int argc, char *argv[]);
+void test_yolov3_tiny_with_gpu(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
-	test_maxpool_layer_with_gpu(argc, argv);
+	test_yolov3_tiny_with_gpu(argc, argv);
 	
 	return 0;
 }
@@ -1514,6 +1520,37 @@ void test_winograd_input_transformation(int argc, char *argv[])
 	input_transform_context *context = create_input_transform_context(F4x4_3x3, input_width, input_height,
 		input_channels, stride, padding);
 	
+	int input_image_width, input_image_height;
+	get_input_image_size(context, &input_image_width, &input_image_height);
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
+	cl_image_desc input_image_desc;
+	memset(&input_image_desc, 0, sizeof(cl_image_desc));
+	input_image_desc.image_type = CL_MEM_OBJECT_IMAGE2D,
+	input_image_desc.image_width = input_image_width;
+	input_image_desc.image_height = input_image_height;
+
+	cl_mem d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &input_image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		exit(-1);
+	}
+
+	size_t input_image_origin[] = {0, 0, 0};
+	size_t input_image_region[] = {input_image_width, input_image_height, 1};
+	size_t image_row_pitch, image_slice_pitch;
+	float *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE, input_image_origin,
+		input_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	nchw_to_nhwc_quad(input, h_input, input_width, input_height, input_channels, 1, input_width, image_row_pitch >> 2);
+	save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
+	cl_event event;
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
+	set_winograd_convolution_input(context, d_input);
+	
 	int transformed_input_width, transformed_input_height;
 	get_transformed_input_image_size(context, &transformed_input_width, &transformed_input_height);
 	float *transformed_input = calloc((transformed_input_width << 2) * transformed_input_height, sizeof(float));
@@ -1524,7 +1561,7 @@ void test_winograd_input_transformation(int argc, char *argv[])
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-		transform_input(context, input, transformed_input);
+		transform_input(context, transformed_input);
 	}
 	gettimeofday(&t2, NULL);
 	printf("transform_input: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
@@ -1535,6 +1572,7 @@ void test_winograd_input_transformation(int argc, char *argv[])
 	free(input);
 	free(transformed_input);
 
+	clReleaseMemObject(d_input);
 	cl_destroy_wrapper(wrapper);
 #endif	
 }
@@ -1562,7 +1600,7 @@ void test_winograd_convolution(int argc, char *argv[])
 		save_result = atoi(argv[1]);
 	
 	float total_duration[3] = {0, 0, 0};
-	for (int g = 0;  g < 9; ++g) {
+	for (int g = 0;  g < 1; ++g) {
 		float *transformed_weights = NULL;
 		float *transformed_input = NULL;
 		float *output = NULL;
@@ -1612,6 +1650,40 @@ void test_winograd_convolution(int argc, char *argv[])
 
 		input_transform_context *itc = create_input_transform_context(F4x4_3x3, input_width, input_height,
 			input_channels, stride, padding);
+			
+		int input_image_width, input_image_height;
+		get_input_image_size(itc, &input_image_width, &input_image_height);
+		cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+		cl_image_format image_format = {
+			.image_channel_order = CL_RGBA,
+			.image_channel_data_type = CL_FLOAT
+		};
+		
+		cl_image_desc input_image_desc;
+		memset(&input_image_desc, 0, sizeof(cl_image_desc));
+		input_image_desc.image_type = CL_MEM_OBJECT_IMAGE2D,
+		input_image_desc.image_width = input_image_width;
+		input_image_desc.image_height = input_image_height;
+
+		cl_int errcode;
+		cl_mem d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &input_image_desc, NULL, &errcode);
+		if (CL_SUCCESS != errcode) {
+			fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+			exit(-1);
+		}
+
+		size_t input_image_origin[] = {0, 0, 0};
+		size_t input_image_region[] = {input_image_width, input_image_height, 1};
+		size_t image_row_pitch, image_slice_pitch;
+		float *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE, input_image_origin,
+			input_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+		nchw_to_nhwc_quad(input, h_input, input_width, input_height, input_channels, 1, input_width, image_row_pitch >> 2);
+		if (save_result) {
+			save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
+		}
+		cl_event event;
+		clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
+		set_winograd_convolution_input(itc, d_input);
 		
 		int transformed_input_width, transformed_input_height;		
 		if (save_result) {
@@ -1620,7 +1692,7 @@ void test_winograd_convolution(int argc, char *argv[])
 		}
 		struct timeval t1, t2; 
 		gettimeofday(&t1, NULL);
-		transform_input(itc, input, transformed_input);
+		transform_input(itc, transformed_input);
 		gettimeofday(&t2, NULL);
 		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 		total_duration[0] += duration;
@@ -1631,6 +1703,7 @@ void test_winograd_convolution(int argc, char *argv[])
 			free(transformed_input);
 		}
 		
+		clReleaseMemObject(d_input);
 		matrix_multiplication_context *mmc = create_matrix_multiplication_context(wtc, itc);
 		
 		int output_image_width, output_image_height;
@@ -1649,7 +1722,7 @@ void test_winograd_convolution(int argc, char *argv[])
 			free(output);
 		}
 	
-		output_inverse_transform_context *oitc = create_output_inverse_transform_context(mmc);
+		output_inverse_transform_context *oitc = create_output_inverse_transform_context(mmc, LEAKY);
 		
 		int inverse_transformed_output_image_width, inverse_transformed_output_image_height;
 		if (save_result) {
@@ -1780,22 +1853,25 @@ void test_normalize_image_with_gpu(int argc, char *argv[])
 	const int src_row_pitch = get_bmp_pitch(bmp);
 	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
-			h_image[y * row_pitch + (x << 2)]     = data[y * src_row_pitch + x * 3];
-			h_image[y * row_pitch + (x << 2) + 1] = data[y * src_row_pitch + x * 3 + 1];
-			h_image[y * row_pitch + (x << 2) + 2] = data[y * src_row_pitch + x * 3 + 2];
-			h_image[y * row_pitch + (x << 2) + 3] = 0;
+			h_image[(height - 1 - y) * row_pitch + (x << 2)]     = data[y * src_row_pitch + x * 3];
+			h_image[(height - 1 - y) * row_pitch + (x << 2) + 1] = data[y * src_row_pitch + x * 3 + 1];
+			h_image[(height - 1 - y) * row_pitch + (x << 2) + 2] = data[y * src_row_pitch + x * 3 + 2];
+			h_image[(height - 1 - y) * row_pitch + (x << 2) + 3] = 0;
 		}
 	}
 	cl_event event;
 	clEnqueueUnmapMemObject(wrapper.command_queue, image, h_image, 0, NULL, &event);
 
+	float scale;
 	int resized_width, resized_height;
 	if (normalized_width / (float)width < normalized_height / (float)height) {
 		resized_width = normalized_width;
 		resized_height = (int)(height * normalized_width / (float)width);
+		scale = width / (float)normalized_width;
 	} else {
 		resized_width = (int)(width * normalized_height / (float)height);
 		resized_height = normalized_height;
+		scale = height / (float)normalized_height;
 	}
 	
 	region[0] = normalized_width;
@@ -1811,6 +1887,7 @@ void test_normalize_image_with_gpu(int argc, char *argv[])
 	errcode |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &normalized_image);
 	errcode |= clSetKernelArg(kernel, 2, sizeof(int), &resized_width);
 	errcode |= clSetKernelArg(kernel, 3, sizeof(int), &resized_height);
+	errcode |= clSetKernelArg(kernel, 4, sizeof(float), &scale);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clSetKernelArg fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
@@ -1868,25 +1945,521 @@ void test_normalize_image_with_gpu(int argc, char *argv[])
 
 void test_maxpool_layer_with_gpu(int argc, char *argv[])
 {
-	const int input_width = 416;
-	const int input_height = 416;
-	const int filter_channels = 16;
+#ifdef OPENCL
+	float *input = NULL;
+	cl_mem d_input = 0;
+	maxpool_layer *layer = NULL;
+	dim3 input_size = {416, 416, 16};
 	
-	float *input = calloc(input_width * input_height * filter_channels, sizeof(float));
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	input = calloc(input_size.w * input_size.h * input_size.c, sizeof(float));
+	if (!input) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
 	srand(time(NULL));
-	for (int i = 0; i < input_width * input_height * filter_channels; ++i) {
+	for (int i = 0; i < input_size.w * input_size.h * input_size.c; ++i) {
 		input[i] = rand() / (double)RAND_MAX - 0.5;
 	}
 	
-	save_volume(input, input_width, input_height, filter_channels, "input.txt");
-	dim3 input_size = {input_width, input_height, filter_channels};
+	save_volume(input, input_size.w, input_size.h, input_size.c, "input.txt");	
+	const int channel_blocks = (input_size.c + 3) >> 2;
+	const int input_image_width = input_size.w * channel_blocks;
+	const int input_image_height = input_size.h;
+	
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = input_image_width;
+	image_desc.image_height = input_image_height;
+	
+	d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+
+	cl_event event;
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {input_image_width, input_image_height, 1};
+	size_t image_row_pitch, image_slice_pitch;
+	float *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	nchw_to_nhwc_quad(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch >> 2);
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
+
 	dim3 output_size;
-	void *layers[] = {make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size)};
-	znet *net = znet_create(layers, 1, "coco.weights");
-	maxpool_layer *layer = (maxpool_layer *)layers[0];
-	layer->input = input;
-	forward_maxpool_layer(layer, net);
-	save_volume(layer->output, output_size.w * output_size.c, output_size.h, 1, "maxpool.txt");
-	znet_destroy(net);
+	layer = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
+	set_maxpool_layer_input(layer, d_input);
+	forward_maxpool_layer(layer, NULL);
+	cl_mem d_output = get_maxpool_layer_output(layer);
+	const int output_image_width = output_size.w * channel_blocks;
+	const int output_image_height = output_size.h;
+	
+	region[0] = output_image_width;
+	region[1] = output_image_height;
+	float *h_output = clEnqueueMapImage(wrapper.command_queue, d_output, CL_TRUE, CL_MAP_READ,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	save_volume(h_output, output_size.w * output_size.c, output_size.h, 1, "maxpool.txt");
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_output, h_output, 0, NULL, &event);
+	
+	cleanup:
+	clReleaseMemObject(d_input);
+	free_maxpool_layer(layer);
 	free(input);
+	cl_destroy_wrapper(wrapper);
+#endif
+}
+
+void test_direct_convolution(int argc, char *argv[])
+{
+#ifdef OPENCL
+	float *weights = NULL;
+	float *biases = NULL;
+	float *input = NULL;
+	cl_mem d_input = 0;
+	convolutional_layer *layer = NULL;
+	dim3 input_size = {13, 13, 1024};
+	const int nfilters = 256;
+	
+	int save_result = 0;
+	if (argc > 1) save_result = atoi(argv[1]);
+	
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	dim3 output_size;
+	layer = make_convolutional_layer(LEAKY, input_size, 1, nfilters, 1, 0, 1, 1, &output_size);
+	
+	weights = calloc(input_size.c * nfilters, sizeof(float));
+	if (!weights) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	srand(time(NULL));
+	for (int i = 0; i < input_size.c * nfilters; ++i) {
+		weights[i] = rand() / (double)RAND_MAX;
+	}
+	
+	if (save_result) save_volume(weights, 1, 1, input_size.c * nfilters, "weights.txt");
+	
+	biases = calloc(nfilters, sizeof(float));
+	if (!biases) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	srand(time(NULL));
+	for (int i = 0; i < nfilters; ++i) {
+		biases[i] = rand() / (double)RAND_MAX;
+	}
+	
+	if (save_result) save_volume(biases, nfilters, 1, 1, "biases.txt");
+	
+	input = calloc(input_size.w * input_size.h * input_size.c, sizeof(float));
+	if (!input) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	srand(time(NULL));
+	for (int i = 0; i < input_size.w * input_size.h * input_size.c; ++i) {
+		input[i] = 0.1f * (rand() / (double)RAND_MAX - 0.5f);
+	}
+
+	if (save_result) save_volume(input, input_size.w, input_size.h, input_size.c, "input.txt");
+	
+	const int input_image_width = input_size.w * round_up_division_4(input_size.c);
+	const int input_image_height = input_size.h;
+	
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = input_image_width;
+	image_desc.image_height = input_image_height;
+	
+	d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	cl_event event;
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {input_image_width, input_image_height, 1};
+	size_t image_row_pitch, image_slice_pitch;
+	float *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	nchw_to_nhwc_quad(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch >> 2);
+	if (save_result) save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
+		
+	memcpy(layer->weights, weights, input_size.c * nfilters * sizeof(float));
+	memcpy(layer->biases, biases, nfilters * sizeof(float));
+	load_direct_convolution_weight(layer->dcc, weights, biases);
+	set_convolutional_layer_input(layer, d_input);
+	forward_convolutional_layer(layer, NULL);
+	cl_mem d_output = get_convolutional_layer_output(layer);
+	
+	const int output_image_width = output_size.w * round_up_division_4(output_size.c);
+	const int output_image_height = output_size.h;
+	region[0] = output_image_width;
+	region[1] = output_image_height;
+	float *h_output = clEnqueueMapImage(wrapper.command_queue, d_output, CL_TRUE, CL_MAP_READ,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	if (save_result) save_volume(h_output, output_image_width << 2, output_image_height, 1, "output.txt");
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_output, h_output, 0, NULL, &event);
+	
+	cleanup:
+	free(input);
+	free(biases);
+	free(weights);
+	clReleaseMemObject(d_input);
+	cl_destroy_wrapper(wrapper);
+	free_convolution_layer(layer);
+#endif	
+}
+
+void test_resample_layer_with_gpu(int argc, char *argv[])
+{
+#ifdef OPENCL
+	resample_layer *layer = NULL;
+	float *input = NULL;
+	cl_mem d_input = 0;
+	cl_mem d_output = 0;
+	int save_result = 0;
+	
+	if (argc > 1) save_result = atoi(argv[1]);
+
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	dim3 input_size = {13, 13, 128};
+	dim3 output_size;
+	layer = make_resample_layer(input_size, 1, 2, &output_size);
+	
+	input = calloc(input_size.w * input_size.h * input_size.c, sizeof(float));
+	if (!input) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	srand(time(NULL));
+	for (int i = 0; i < input_size.w * input_size.h * input_size.c; ++i) {
+		input[i] = rand() / (double)RAND_MAX;
+	}
+	
+	if (save_result) save_volume(input, input_size.w, input_size.h, input_size.c, "input.txt");
+	
+	const int input_image_width = input_size.w * round_up_division_4(input_size.c);
+	const int input_image_height = input_size.h;
+	
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = input_image_width;
+	image_desc.image_height = input_image_height;
+	
+	d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	cl_event event;
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {input_image_width, input_image_height, 1};
+	size_t image_row_pitch, image_slice_pitch;
+	float *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	nchw_to_nhwc_quad(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch >> 2);
+	if (save_result) save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
+	
+	set_resample_layer_input(layer, d_input);
+	forward_resample_layer(layer, NULL);
+	d_output = get_resample_layer_output(layer);
+	
+	const int output_image_width = output_size.w * round_up_division_4(output_size.c);
+	const int output_image_height = output_size.h;
+	region[0] = output_image_width;
+	region[1] = output_image_height;
+	float *h_output = clEnqueueMapImage(wrapper.command_queue, d_output, CL_TRUE, CL_MAP_READ,
+		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	if (save_result) save_volume(h_output, output_image_width << 2, output_image_height, 1, "output.txt");
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_output, h_output, 0, NULL, &event);	
+	
+	cleanup:
+	if (input) free(input);
+	free_resample_layer(layer);
+	clReleaseMemObject(d_input);
+	cl_destroy_wrapper(wrapper);
+#endif
+}
+
+void test_nhwc_to_nchw_quad(int argc, char *argv[])
+{
+	const int w = 13;
+	const int h = 13;
+	const int c = 18;
+	const int rounded_c = ((c + 3) >> 2) << 2;
+	float *input = calloc(w * h * rounded_c, sizeof(float));
+	float *output = calloc(w * h * c, sizeof(float));
+	
+	srand(time(NULL));
+	for (int i = 0; i < w * h * rounded_c; ++i) {
+		input[i] = rand() / (double)RAND_MAX;
+	}
+	
+	save_volume(input, w * rounded_c, h, 1, "nhwc.txt");
+	nhwc_to_nchw_quad(input, output, w, h, c, 1, w * rounded_c, w);
+	save_volume(output, w, h, c, "nchw.txt");
+	
+	free(input);
+	free(output);
+}
+
+void test_image_standardizer(int argc, char *argv[])
+{
+#ifdef OPENCL	
+	bitmap *bmp = NULL;
+	bitmap *standard_bmp = NULL;
+	image_standardizer *standardizer = NULL;
+	unsigned char *standard_image_buffer = NULL;
+	
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	bmp = read_bmp(argv[1]);
+	if (!bmp) {
+		fprintf(stderr, "read_bmp fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	const int width = get_bmp_width(bmp);
+	const int height = get_bmp_height(bmp);
+	const int standard_width = 416;
+	const int standard_height = 416;
+	
+	standardizer = create_image_standardizer(width, height, standard_width, standard_height, 3);
+	if (!standardizer) goto cleanup;
+	
+	image *standard_image = standardize_image(standardizer, bmp);
+	cl_mem d_standard_image = standard_image->d_data;
+	
+	standard_image_buffer = calloc(standard_width * standard_height * 3, sizeof(unsigned char));
+	if (!standard_image_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+
+	cl_event event;
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {standard_width, standard_height, 1};
+	size_t row_pitch, slice_pitch;
+	float *h_standard_image = clEnqueueMapImage(wrapper.command_queue, d_standard_image, CL_TRUE, CL_MAP_READ,
+		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
+	row_pitch = row_pitch >> 2;
+	for (int y = 0; y < standard_height; ++y) {
+		for (int x = 0; x < standard_width; ++x) {
+			standard_image_buffer[3 * (y * standard_width + x)]     = (unsigned char)(h_standard_image[y * row_pitch + (x << 2)] * 255);
+			standard_image_buffer[3 * (y * standard_width + x) + 1] = (unsigned char)(h_standard_image[y * row_pitch + (x << 2) + 1] * 255);
+			standard_image_buffer[3 * (y * standard_width + x) + 2] = (unsigned char)(h_standard_image[y * row_pitch + (x << 2) + 2] * 255);
+		}
+	}
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_standard_image, h_standard_image, 0, NULL, &event);
+	
+	standard_bmp = create_bmp((const char *)standard_image_buffer, standard_width, standard_height, 24);
+	save_bmp(standard_bmp, "gpu-standard_image.bmp");
+	
+	cleanup:
+	delete_bmp(bmp);
+	delete_bmp(standard_bmp);
+	if (standard_image_buffer) free(standard_image_buffer);
+	free_image_standardizer(standardizer);
+	cl_destroy_wrapper(wrapper);
+#endif
+}
+
+void test_yolov3_tiny_with_gpu(int argc, char *argv[])
+{
+#ifdef OPENCL	
+	bitmap *bmp = NULL;
+	image_standardizer *standardizer = NULL;
+	znet *net = NULL;
+	image *standard_image = NULL;
+	
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	bmp = read_bmp(argv[1]);
+	if (!bmp) {
+		fprintf(stderr, "read_bmp fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	const int width = get_bmp_width(bmp);
+	const int height = get_bmp_height(bmp);
+	const int standard_width = 416;
+	const int standard_height = 416;
+	
+	standardizer = create_image_standardizer(width, height, standard_width, standard_height, 3);
+	if (!standardizer) goto cleanup;
+	
+	standard_image = standardize_image(standardizer, bmp);
+	
+	void *layers[24];
+	int nlayers = sizeof(layers) / sizeof(layers[0]);
+	dim3 output_size;
+	
+	int bigger_mask[] = {3, 4, 5};
+	int smaller_mask[] = {0, 1, 2};
+	int anchor_boxes[] = {61,117, 62,191, 199,118, 128,195, 92,293, 191,291};
+	const int scales = 3;
+	const int classes = 1;
+	const int object_tensor_depth = (4 + 1 + classes) * scales;
+	
+	dim3 input_size = {416, 416, 3};
+	layers[0] = make_convolutional_layer(LEAKY, input_size, 3, 16, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[1] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[2] = make_convolutional_layer(LEAKY, input_size, 3, 32, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[3] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[4] = make_convolutional_layer(LEAKY, input_size, 3, 64, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[5] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[6] = make_convolutional_layer(LEAKY, input_size, 3, 128, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[7] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[8] = make_convolutional_layer(LEAKY, input_size, 3, 256, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[9] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[10] = make_convolutional_layer(LEAKY, input_size, 3, 512, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[11] = make_maxpool_layer(input_size, 2, 1, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[12] = make_convolutional_layer(LEAKY, input_size, 3, 1024, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[13] = make_convolutional_layer(LEAKY, input_size, 1, 256, 1, 0, 1, 1, &output_size);
+	input_size = output_size;
+	layers[14] = make_convolutional_layer(LEAKY, input_size, 3, 512, 1, 1, 1, 1, &output_size);
+	input_size = output_size;
+	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, object_tensor_depth, 1, 0, 1, 0, &output_size);
+	
+	input_size = output_size;
+	layers[16] = make_yolo_layer(input_size, 1, 3, 6, classes, bigger_mask, anchor_boxes);
+	
+	int layer_ids1[] = {13};
+	void *routes1[] = {layers[13]};
+	layers[17] = make_route_layer(1, 1, routes1, layer_ids1, &output_size);
+	
+	input_size = output_size;
+	layers[18] = make_convolutional_layer(LEAKY, input_size, 1, 128, 1, 0, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[19] = make_resample_layer(input_size, 1, 2, &output_size);
+	
+	int layer_ids2[] = {19, 8};
+	void *routes2[] = {layers[19], layers[8]};
+	layers[20] = make_route_layer(1, 2, routes2, layer_ids2, &output_size);
+	
+	input_size = output_size;
+	layers[21] = make_convolutional_layer(LEAKY, input_size, 3, 256, 1, 1, 1, 1, &output_size);
+	
+	input_size = output_size;
+	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, object_tensor_depth, 1, 0, 1, 0, &output_size);
+	
+	input_size = output_size;
+	layers[23] = make_yolo_layer(input_size, 1, 3, 6, classes, smaller_mask, anchor_boxes);
+	
+	net = znet_create(layers, nlayers, "agriculture.weights");
+	if (!net) goto cleanup;
+	
+	znet_architecture(net);
+	
+	int N = 1;
+	if (argc > 3) N = atoi(argv[3]);
+	printf("inference iterations %d\n", N);
+	
+	struct timeval t1, t2; 
+    gettimeofday(&t1, NULL);
+	for (int i = 0; i < N; ++i) {
+		printf("------------------------------------------------------\n");
+		znet_inference(net, standard_image);
+	}
+	gettimeofday(&t2, NULL);
+	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
+	
+	float thresh = 0.5f;
+	if (argc > 2) thresh = atof(argv[2]);
+	
+	list *detections = get_detections(net, thresh, width, height);	
+	list *bests = soft_nms(detections, 2.5);
+	
+	draw_detections(bmp, bests, names, thresh);
+	save_bmp(bmp, "detections.bmp");
+	
+	free_detections(bests);
+	free_detections(detections);
+	
+	cleanup:
+	znet_destroy(net);
+	delete_bmp(bmp);
+	free_image_standardizer(standardizer);
+	cl_destroy_wrapper(wrapper);
+#endif	
 }

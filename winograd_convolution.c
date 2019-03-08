@@ -225,12 +225,7 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 				}
 			}
 		}
-	}
-	
-	if (transformed_weights) {
-		save_volume(h_weight, context->weight_image_width << 2, context->weight_image_height, 1, "formated_weights.txt");
-	}
-	
+	}	
 	cl_event event;
 	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_weight, h_weight, 0, NULL, &event);
 
@@ -244,12 +239,8 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 	size_t work_group_size;
 	clGetKernelWorkGroupInfo(context->kernel, wrapper.device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &work_group_size, NULL);
 	size_t global_work_size[] = {(context->filter_channels + 3) >> 2, context->nfilters};
-	const int local_work_size_x = global_work_size[0] < work_group_size ? global_work_size[0] : work_group_size;
-	const int num_work_item = global_work_size[0] * global_work_size[1];
-	const int max_work_group_size = num_work_item < work_group_size ? num_work_item : work_group_size;
-	size_t local_work_size[] = {local_work_size_x, max_work_group_size / local_work_size_x};
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
-		local_work_size, 0, NULL, &event);
+		NULL, 0, NULL, &event);
 
 #ifdef CL_PROFILING_ENABLE
 	static float total = 0;
@@ -332,24 +323,6 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 	context->input_image_width = input_width * context->input_channel_blocks;
 	context->input_image_height = input_height;
 	
-	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
-	cl_image_format image_format = {
-		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
-	};
-	
-	cl_image_desc input_image_desc;
-	memset(&input_image_desc, 0, sizeof(cl_image_desc));
-	input_image_desc.image_type = CL_MEM_OBJECT_IMAGE2D,
-	input_image_desc.image_width = context->input_image_width;
-	input_image_desc.image_height = context->input_image_height;
-
-	context->d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &input_image_desc, NULL, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-
 	const int input_size = get_image_tile_size(conv);
 	const int output_size = get_tile_output_size(conv);
 	context->ntilesX = (input_width + (output_size - 1)) / output_size;
@@ -357,7 +330,12 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 	context->transformed_input_image_width = context->ntilesX * context->ntilesY;
 	context->transformed_input_image_height = context->input_channel_blocks * input_size * input_size;
 	
-	mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
+	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
 	cl_image_desc transformed_input_image_desc;
 	memset(&transformed_input_image_desc, 0, sizeof(cl_image_desc));
 	transformed_input_image_desc.image_type = CL_MEM_OBJECT_IMAGE2D,
@@ -372,6 +350,18 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 	}
 	
 	return context;
+}
+
+void get_input_image_size(input_transform_context *context, int *width, int *height)
+{
+	if (context) {
+		*width = context->input_image_width;
+		*height = context->input_image_height;
+	} else {
+		fprintf(stderr, "invalid input transform context[%s:%d]!\n", __FILE__, __LINE__);
+		*width = 0;
+		*height = 0;
+	}
 }	
 
 void get_transformed_input_image_size(input_transform_context *context, int *width, int *height)
@@ -386,45 +376,9 @@ void get_transformed_input_image_size(input_transform_context *context, int *wid
 	}
 }
 	
-void transform_input(input_transform_context *context, float *input, float *transformed_input)
-{
+void transform_input(input_transform_context *context, float *transformed_input)
+{	
 	cl_int errcode;
-	size_t input_image_origin[] = {0, 0, 0};
-	size_t input_image_region[] = {context->input_image_width, context->input_image_height, 1};
-	size_t image_row_pitch, image_slice_pitch;
-	float *h_input = clEnqueueMapImage(wrapper.command_queue, context->d_input, CL_TRUE, CL_MAP_WRITE, input_image_origin,
-		input_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	
-	const int src_slice_pitch = context->input_width * context->input_height;
-	const int dst_row_pitch = (context->input_width << 2) * context->input_channel_blocks;
-	for (int b = 0; b < context->input_channel_blocks; ++b) {
-		float *src = input + b * (src_slice_pitch << 2);
-		float *dst = h_input + b * (context->input_width << 2);
-		int channel_remainder = context->input_channels - (b << 2);
-		channel_remainder = channel_remainder < 4 ? channel_remainder : 4;
-		for (int c = 0; c < channel_remainder; ++c) {
-			for (int y = 0; y < context->input_height; ++y) {
-				for (int x = 0; x < context->input_width; ++x) {
-					dst[y * dst_row_pitch + (x << 2) + c] = src[c * src_slice_pitch + y * context->input_width + x];
-				}
-			}
-		}
-		for (int c = channel_remainder; c < 4; ++c) {
-			for (int y = 0; y < context->input_height; ++y) {
-				for (int x = 0; x < context->input_width; ++x) {
-					dst[y * dst_row_pitch + (x << 2) + c] = 0;
-				}
-			}
-		}
-	}
-	
-	if (transformed_input) {
-		save_volume(h_input, context->input_image_width << 2, context->input_image_height, 1, "formated_inputs.txt");
-	}
-	
-	cl_event event;
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_input, h_input, 0, NULL, &event);
-
 	errcode  = clSetKernelArg(context->kernel, 0, sizeof(cl_mem), &context->d_input);
 	errcode |= clSetKernelArg(context->kernel, 1, sizeof(cl_mem), &context->d_transformed_input);
 	errcode |= clSetKernelArg(context->kernel, 2, sizeof(int), &context->input_width);
@@ -435,6 +389,7 @@ void transform_input(input_transform_context *context, float *input, float *tran
 		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 	}
 
+	cl_event event;
 	cl_uint work_dim = 2;
 	size_t global_work_size[] = {context->ntilesX * context->ntilesY, context->input_channel_blocks};
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
@@ -453,6 +408,7 @@ void transform_input(input_transform_context *context, float *input, float *tran
 	clReleaseEvent(event);
 	
 	if (!transformed_input) return;
+	size_t image_row_pitch, image_slice_pitch;
 	size_t transformed_input_image_origin[] = {0, 0, 0};
 	size_t transformed_input_image_region[] = {context->transformed_input_image_width, context->transformed_input_image_height, 1};
 	float *h_transformed_input = clEnqueueMapImage(wrapper.command_queue, context->d_transformed_input, CL_TRUE, CL_MAP_READ,
@@ -468,7 +424,6 @@ void transform_input(input_transform_context *context, float *input, float *tran
 void free_input_transform_context(input_transform_context *context)
 {
 	if (context) {
-		clReleaseMemObject(context->d_input);
 		clReleaseMemObject(context->d_transformed_input);
 		clReleaseProgram(context->program);
 		clReleaseKernel(context->kernel);
@@ -560,7 +515,6 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	size_t global_work_size[] = {global_work_size_x, global_work_size_y};
 	printf("36x([%dx%d]x[%dx%d])\n", context->wtc->transformed_weight_image_height, context->wtc->transformed_weight_image_width / 36,
 		context->itc->transformed_input_image_height / 36, context->itc->transformed_input_image_width);
-	printf("global work size %dx%d\n", global_work_size[0], global_work_size[1]);
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
@@ -572,7 +526,7 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	printf("GPU, matrix_multiply: %fms, total %fms\n", duration, total);
+	printf("GPU, matrix_multiply[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
 #endif
 	clReleaseEvent(event);
 	
@@ -600,7 +554,7 @@ void free_matrix_multiplication_context(matrix_multiplication_context *context)
 	}
 }
 
-output_inverse_transform_context *create_output_inverse_transform_context(matrix_multiplication_context *mmc)
+output_inverse_transform_context *create_output_inverse_transform_context(matrix_multiplication_context *mmc, ACTIVATION act)
 {	
 	output_inverse_transform_context *context = calloc(1, sizeof(output_inverse_transform_context));
 	if (!context) {
@@ -609,9 +563,26 @@ output_inverse_transform_context *create_output_inverse_transform_context(matrix
 	}
 	
 	context->mmc = mmc;
-	
+	char options[256] = "-cl-fast-relaxed-math";
+	switch (act) {
+	case RELU:
+		strcat(options, " -DRELU");
+		break;
+	case LEAKY:
+		strcat(options, " -DLEAKY");
+		break;
+	case LINEAR:
+		strcat(options, " -DLINEAR");
+		break;
+	case LOGISTIC:
+		strcat(options, " -DLOGISTIC");
+		break;
+	default:
+		strcat(options, " -DLINEAR");
+		break;
+	}
+
 	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
 	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -679,7 +650,6 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 	const int ntiles = context->mmc->itc->ntilesX * context->mmc->itc->ntilesY;
 	const int output_channel_blocks = context->mmc->output_channel_blocks;
 	size_t global_work_size[] = {ntiles, output_channel_blocks};
-	printf("inverse_output_transform_f4x4_3x3 global work size %dx%d\n", global_work_size[0], global_work_size[1]);
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 	
@@ -691,7 +661,7 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	printf("GPU, inverse_output_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
+	printf("GPU, inverse_output_transform_f4x4_3x3[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
 #endif
 	clReleaseEvent(event);	
 	
@@ -717,5 +687,15 @@ void free_output_inverse_transform_context(output_inverse_transform_context *con
 		clReleaseKernel(context->kernel);
 		free(context);
 	}
+}
+
+void set_winograd_convolution_input(input_transform_context *context, void *input)
+{
+	context->d_input = input;
+}
+
+void *get_winograd_convolution_output(output_inverse_transform_context *context)
+{
+	return context->d_inverse_transformed_output;
 }
 #endif

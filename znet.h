@@ -7,6 +7,9 @@
 #	include "nnpack.h"
 #endif
 #include "list.h"
+#ifdef OPENCL
+#	include "CL/opencl.h"
+#endif
 
 #ifdef __cplusplus
 extern "C"
@@ -70,6 +73,9 @@ typedef struct {
 	int h;			// 高度
 	int c;			// 通道数
 	float *data;	// 数据
+#ifdef OPENCL
+	cl_mem d_data;	// CPU和GPU的共享数据
+#endif
 } image;
 
 typedef struct {

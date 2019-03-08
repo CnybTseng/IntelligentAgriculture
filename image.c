@@ -1,12 +1,39 @@
 #include <omp.h>
+#include <string.h>
 #ifdef __INTEL_SSE__
-	#include <emmintrin.h>
-	#include <tmmintrin.h>
+#	include <emmintrin.h>
+#	include <tmmintrin.h>
 #elif __ARM_NEON__
-	#include <arm_neon.h>
+#	include <arm_neon.h>
 #endif
 #include "image.h"
 #include "zutils.h"
+#ifdef OPENCL
+#	include "cl_wrapper.h"
+#endif
+
+#ifdef OPENCL
+extern cl_wrapper wrapper;
+#endif
+
+struct image_standardizer {
+	int width;
+	int height;
+	int resized_width;
+	int resized_height;
+	int standard_width;
+	int standard_height;
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	cl_program program;
+	cl_kernel kernel;
+	cl_mem d_input;
+#else
+	unsigned char *chw_image;
+	unsigned char *resized_chw_image;
+#endif
+	image *output;
+	float scale;
+};
 
 image *create_image(int width, int height, int nchannels)
 {
@@ -23,9 +50,29 @@ image *create_image(int width, int height, int nchannels)
 	img->data = calloc(width * height * nchannels, sizeof(float));
 	if (!img->data) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
-		free_image(img);
+		goto cleanup;
 	}
+#ifdef OPENCL
+	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
 	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = width * round_up_division_4(nchannels);
+	image_desc.image_height = height;
+	
+	cl_int errcode;
+	img->d_data = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		cleanup:free_image(img);
+		return 0;
+	}
+#endif
 	return img;
 }
 
@@ -36,7 +83,9 @@ void free_image(image *img)
 		free(img->data);
 		img->data = NULL;
 	}
-	
+#ifdef OPENCL	
+	clReleaseMemObject(img->d_data);
+#endif	
 	free(img);
 	img = NULL;
 }
@@ -604,4 +653,164 @@ void swap_channel(image *img)
 			img->data[y * img->w + x + offset] = swap;
 		}
 	}
+}
+
+image_standardizer *create_image_standardizer(int width, int height, int standard_width, int standard_height, int nchannels)
+{
+	image_standardizer *standardizer = calloc(1, sizeof(image_standardizer));
+	if (!standardizer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		return standardizer;
+	}
+	
+	standardizer->width = width;
+	standardizer->height = height;
+	standardizer->standard_width = standard_width;
+	standardizer->standard_height = standard_height;
+
+	if (standard_width / (float)width < standard_height / (float)height) {
+		standardizer->resized_width = standard_width;
+		standardizer->resized_height = (int)(height * standard_width / (float)width);
+		standardizer->scale = width / (float)standard_width;
+	} else {
+		standardizer->resized_width = (int)(width * standard_height / (float)height);
+		standardizer->resized_height = standard_height;
+		standardizer->scale = height / (float)standard_height;
+	}
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_UNORM_INT8
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = standardizer->width;
+	image_desc.image_height = standardizer->height;
+	
+	cl_int errcode;
+	standardizer->d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	char options[] = "";
+	standardizer->program = cl_make_wrapper_program(wrapper, "utils.cl", options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	standardizer->kernel = cl_make_wrapper_kernel(wrapper, standardizer->program, "normalize_image", &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
+	standardizer->chw_image = calloc(width * height * nchannels, sizeof(unsigned char));
+	if (!standardizer->chw_image) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	standardizer->resized_chw_image = calloc(standardizer->resized_width * standardizer->resized_height * nchannels,
+		sizeof(float));
+	if (!standardizer->resized_chw_image) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+#endif	
+	standardizer->output = create_image(standardizer->standard_width, standardizer->standard_height, nchannels);
+	if (!standardizer->output) {
+		cleanup:free_image_standardizer(standardizer);
+		return 0;
+	}
+
+	return standardizer;
+}
+
+image *standardize_image(image_standardizer *standardizer, bitmap *bmp)
+{
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	cl_int errcode;
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {standardizer->width, standardizer->height, 1};
+	size_t row_pitch, slice_pitch;
+	unsigned char *h_input = clEnqueueMapImage(wrapper.command_queue, standardizer->d_input, CL_TRUE, CL_MAP_WRITE,
+		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
+
+	const unsigned char *data = get_bmp_data(bmp);
+	const int src_row_pitch = get_bmp_pitch(bmp);
+	for (int y = 0; y < standardizer->height; ++y) {
+		for (int x = 0; x < standardizer->width; ++x) {
+			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2)]     = data[y * src_row_pitch + x * 3 + 2];
+			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 1] = data[y * src_row_pitch + x * 3 + 1];
+			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 2] = data[y * src_row_pitch + x * 3 + 0];
+			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 3] = 0;
+		}
+	}
+	cl_event event;
+	clEnqueueUnmapMemObject(wrapper.command_queue, standardizer->d_input, h_input, 0, NULL, &event);
+
+	region[0] = standardizer->standard_width;
+	region[1] = standardizer->standard_height;
+	float fill_color[] = {0.5f, 0.5f, 0.5f, 0};
+	cl_mem standard_image = standardizer->output->d_data;
+	errcode = clEnqueueFillImage(wrapper.command_queue, standard_image, fill_color, origin, region, 0, NULL, NULL);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clEnqueueFillImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+	}
+	
+	errcode  = clSetKernelArg(standardizer->kernel, 0, sizeof(cl_mem), &standardizer->d_input);
+	errcode |= clSetKernelArg(standardizer->kernel, 1, sizeof(cl_mem), &standard_image);
+	errcode |= clSetKernelArg(standardizer->kernel, 2, sizeof(int), &standardizer->resized_width);
+	errcode |= clSetKernelArg(standardizer->kernel, 3, sizeof(int), &standardizer->resized_height);
+	errcode |= clSetKernelArg(standardizer->kernel, 4, sizeof(float), &standardizer->scale);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clSetKernelArg fail[%s:%d].\n", __FILE__, __LINE__);
+	}
+
+	cl_uint work_dim = 2;
+	size_t global_work_size[] = {standardizer->resized_width, standardizer->resized_height};
+	clEnqueueNDRangeKernel(wrapper.command_queue, standardizer->kernel, work_dim, NULL, global_work_size,
+		NULL, 0, NULL, &event);
+
+#ifdef CL_PROFILING_ENABLE	
+	cl_ulong start, end;
+	clFinish(wrapper.command_queue);
+	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
+	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
+	float duration = (end - start) * 1e-6f;
+	printf("GPU, normalize_image: %fms.\n", duration);
+#endif
+	clReleaseEvent(event);
+#else
+	int pitch = get_bmp_pitch(bmp);
+	unsigned char *data = get_bmp_data(bmp);
+	split_channel(data, standardizer->chw_image, pitch, standardizer->width, standardizer->height);
+	resize_image(standardizer->chw_image, standardizer->resized_chw_image, standardizer->width,
+		standardizer->height, standardizer->resized_width, standardizer->resized_height, 3);
+	set_image(standardizer->output, 0.5);
+	embed_image(standardizer->resized_chw_image, standardizer->output, standardizer->resized_width,
+		standardizer->resized_height);
+#endif	
+	return standardizer->output;
+}
+
+void free_image_standardizer(image_standardizer *standardizer)
+{
+	if (!standardizer) return;
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	clReleaseMemObject(standardizer->d_input);
+	clReleaseProgram(standardizer->program);
+	clReleaseKernel(standardizer->kernel);
+	free_image(standardizer->output);
+#else
+	if (standardizer->chw_image) free(standardizer->chw_image);
+	if (standardizer->resized_chw_image) free(standardizer->resized_chw_image);
+#endif
+	free(standardizer);
 }

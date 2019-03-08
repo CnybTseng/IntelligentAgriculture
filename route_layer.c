@@ -1,10 +1,18 @@
 #include <stdarg.h>
+#include <string.h>
 #include "route_layer.h"
 #include "convolutional_layer.h"
 #include "resample_layer.h"
 #include "zutils.h"
 
 static int parse_input_layer(void *layer, dim3 *output_size);
+
+#ifdef OPENCL
+extern cl_wrapper wrapper;
+#endif
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+static void forward_route_layer_gpu(route_layer *layer, znet *net);
+#endif
 
 void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_id, dim3 *output_size)
 {
@@ -25,6 +33,9 @@ void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_i
 	layer->input_layers = NULL;
 	layer->input_sizes = NULL;
 	layer->output = NULL;
+#ifdef OPENCL
+	layer->d_output = 0;
+#endif
 	
 	layer->input_layers = calloc(nroutes, sizeof(int));
 	if (!layer->input_layers) {
@@ -47,6 +58,27 @@ void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_i
 	if (output_size) {
 		*output_size = layer->output_size;
 	}
+	
+#ifdef OPENCL
+	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = layer->output_size.w * round_up_division_4(layer->output_size.c);
+	image_desc.image_height = layer->output_size.h;
+	
+	cl_int errcode;
+	layer->d_output = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#endif
 
 	layer->noutputs = layer->ninputs;
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
@@ -78,6 +110,10 @@ void free_route_layer(void *_layer)
 		layer->output = NULL;
 	}
 	
+#ifdef OPENCL
+	clReleaseMemObject(layer->d_output);
+#endif
+	
 	free(layer);
 	layer = NULL;
 }
@@ -93,20 +129,27 @@ void print_route_layer_info(void *_layer, int id)
 	printf("\n");
 }
 
-void set_route_layer_input(void *_layer, float *input)
+void set_route_layer_input(void *_layer, void *input)
 {
 	;
 }
 
-float *get_route_layer_output(void *_layer)
+void *get_route_layer_output(void *_layer)
 {
 	route_layer *layer = (route_layer *)_layer;
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	return layer->output;
+#else
+	return layer->d_output;
+#endif
 }
 
 void forward_route_layer(void *_layer, znet *net)
 {
 	route_layer *layer = (route_layer *)_layer;
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	return forward_route_layer_gpu(layer, net);
+#endif	
 	int offset = 0;
 	void **layers = znet_layers(net);
 	for (int r = 0; r < layer->nroutes; ++r) {
@@ -158,3 +201,43 @@ int parse_input_layer(void *layer, dim3 *output_size)
 		return 0;
 	}
 }
+
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+void forward_route_layer_gpu(route_layer *layer, znet *net)
+{
+	void **layers = znet_layers(net);
+	int row_start = 0;
+	for (int r = 0; r < layer->nroutes; ++r) {
+		LAYER_TYPE type = *(LAYER_TYPE *)(layers[layer->input_layers[r]]);		
+		if (type == CONVOLUTIONAL) {
+			convolutional_layer *input_layer = (convolutional_layer *)layers[layer->input_layers[r]];
+			cl_mem src_image = get_convolutional_layer_output(input_layer);
+			int src_image_width, src_image_height;
+			if (3 == input_layer->filter_size) {
+				get_inverse_transformed_output_image_size(input_layer->oitc, &src_image_width, &src_image_height);
+			} else if (1 == input_layer->filter_size) {
+				get_direct_convolution_output_image_size(input_layer, &src_image_width, &src_image_height);
+			}
+			size_t src_origion[] = {0, 0, 0};
+			size_t dst_origion[] = {row_start, 0, 0};
+			size_t region[] = {src_image_width, src_image_height, 1};
+			clEnqueueCopyImage(wrapper.command_queue, src_image, layer->d_output, src_origion, dst_origion,
+				region, 0, NULL, NULL);
+			row_start += src_image_width;
+		} else if (type == RESAMPLE) {
+			resample_layer *input_layer = (resample_layer *)layers[layer->input_layers[r]];
+			cl_mem src_image = get_resample_layer_output(input_layer);
+			int src_image_width, src_image_height;
+			get_resample_output_image_size(input_layer, &src_image_width, &src_image_height);
+			size_t src_origion[] = {0, 0, 0};
+			size_t dst_origion[] = {row_start, 0, 0};
+			size_t region[] = {src_image_width, src_image_height, 1};
+			clEnqueueCopyImage(wrapper.command_queue, src_image, layer->d_output, src_origion, dst_origion,
+				region, 0, NULL, NULL);
+			row_start += src_image_width;
+		} else {
+			fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
+		}
+	}
+}
+#endif
