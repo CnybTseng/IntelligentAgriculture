@@ -85,6 +85,7 @@ void test_resample_layer_with_gpu(int argc, char *argv[]);
 void test_nhwc_to_nchw_quad(int argc, char *argv[]);
 void test_image_standardizer(int argc, char *argv[]);
 void test_yolov3_tiny_with_gpu(int argc, char *argv[]);
+void test_standardizer_io(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
@@ -491,6 +492,8 @@ void test_gemm(int argc, char *argv[])
 		ch = aw;
 	}
 	
+	gemm_context *gc = create_gemm_context(transa, transb, ch, cw, aw);
+	
 	float *C = (float *)malloc(cw * ch * sizeof(float));
 	if (!C) {
 		fprintf(stderr, "malloc[%s:%d].\n", __FILE__, __LINE__);
@@ -521,7 +524,7 @@ void test_gemm(int argc, char *argv[])
 	struct timeval t1, t2; 
 	gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i)
-		gemm(transa, transb, ch, cw, aw, 0.56, A, aw, B, bw, 0.84, C, cw);
+		gemm(gc, transa, transb, ch, cw, aw, 0.56, A, aw, B, bw, 0.84, C, cw);
 	gettimeofday(&t2, NULL);
 	float duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 	printf("duration: %f ms.\n", duration);
@@ -561,6 +564,7 @@ void test_gemm(int argc, char *argv[])
 	
 	fclose(fp);
 	mmfree(3, A, B, C);
+	free_gemm_context(gc);
 	
 #ifdef OPENCL
 	cl_destroy_wrapper(wrapper);
@@ -2282,9 +2286,19 @@ void test_image_standardizer(int argc, char *argv[])
 	standardizer = create_image_standardizer(width, height, standard_width, standard_height, 3);
 	if (!standardizer) goto cleanup;
 	
-	image *standard_image = standardize_image(standardizer, bmp);
-	cl_mem d_standard_image = standard_image->d_data;
+	int N = 1;
+	if (argc > 2) N = atoi(argv[2]);
 	
+	image *standard_image = NULL;
+	struct timeval t1, t2; 
+    gettimeofday(&t1, NULL);
+	for (int i = 0; i < N; ++i) {
+		standard_image = standardize_image(standardizer, bmp);
+	}
+	gettimeofday(&t2, NULL);
+	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
+	
+	cl_mem d_standard_image = standard_image->d_data;
 	standard_image_buffer = calloc(standard_width * standard_height * 3, sizeof(unsigned char));
 	if (!standard_image_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
@@ -2321,19 +2335,18 @@ void test_image_standardizer(int argc, char *argv[])
 
 void test_yolov3_tiny_with_gpu(int argc, char *argv[])
 {
-#ifdef OPENCL	
 	bitmap *bmp = NULL;
 	image_standardizer *standardizer = NULL;
 	znet *net = NULL;
 	image *standard_image = NULL;
-	
+#ifdef OPENCL	
 	cl_int errcode;
 	wrapper = cl_create_wrapper(&errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	bmp = read_bmp(argv[1]);
 	if (!bmp) {
 		fprintf(stderr, "read_bmp fail[%s:%d].\n", __FILE__, __LINE__);
@@ -2349,7 +2362,7 @@ void test_yolov3_tiny_with_gpu(int argc, char *argv[])
 	if (!standardizer) goto cleanup;
 	
 	standard_image = standardize_image(standardizer, bmp);
-	
+
 	void *layers[24];
 	int nlayers = sizeof(layers) / sizeof(layers[0]);
 	dim3 output_size;
@@ -2425,10 +2438,10 @@ void test_yolov3_tiny_with_gpu(int argc, char *argv[])
 	
 	input_size = output_size;
 	layers[23] = make_yolo_layer(input_size, 1, 3, 6, classes, smaller_mask, anchor_boxes);
-	
+
 	net = znet_create(layers, nlayers, "agriculture.weights");
 	if (!net) goto cleanup;
-	
+
 	znet_architecture(net);
 	
 	int N = 1;
@@ -2449,7 +2462,7 @@ void test_yolov3_tiny_with_gpu(int argc, char *argv[])
 	
 	list *detections = get_detections(net, thresh, width, height);	
 	list *bests = soft_nms(detections, 2.5);
-	
+
 	draw_detections(bmp, bests, names, thresh);
 	save_bmp(bmp, "detections.bmp");
 	
@@ -2460,6 +2473,48 @@ void test_yolov3_tiny_with_gpu(int argc, char *argv[])
 	znet_destroy(net);
 	delete_bmp(bmp);
 	free_image_standardizer(standardizer);
+#ifdef OPENCL
 	cl_destroy_wrapper(wrapper);
 #endif	
+}
+
+void test_standardizer_io(int argc, char *argv[])
+{
+	bitmap *bmp = NULL;
+	image_standardizer *standardizer = NULL;
+	unsigned char *red = NULL;
+	bitmap *red_bmp = NULL;
+
+	bmp = read_bmp(argv[1]);
+	if (!bmp) {
+		fprintf(stderr, "read_bmp fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+
+	const int width = get_bmp_width(bmp);
+	const int height = get_bmp_height(bmp);
+	const int standard_width = 416;
+	const int standard_height = 416;
+
+	standardizer = create_image_standardizer(width, height, standard_width, standard_height, 3);
+	if (!standardizer) goto cleanup;
+
+	unsigned char *data = get_bmp_data(bmp);
+	float *output = calloc(standard_width * standard_height * 3, sizeof(float));
+	standardize_image_io(standardizer, data, width, height, output);
+
+	red = calloc(standard_width * standard_height, sizeof(unsigned char));
+	
+	for (int i = 0; i < standard_width * standard_height; ++i)
+		red[i] = (unsigned char)(output[i] * 255);
+
+	free(output);
+	red_bmp = create_bmp((const char *)red, standard_width, standard_height, 8);
+	save_bmp(red_bmp, "standard.bmp");
+
+	cleanup:
+	delete_bmp(red_bmp);
+	free(red);
+	delete_bmp(bmp);
+	free_image_standardizer(standardizer);
 }

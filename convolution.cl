@@ -1,4 +1,5 @@
 #pragma OPENCL EXTENSION cl_khr_fp16 : enable
+#pragma OPENCL EXTENSION cl_khr_gl_sharing : enable
 
 #define VECTOR_DATA_TYPE_STRING(data_type, size) data_type##size
 #define VECTOR_DATA_TYPE(data_type, size) VECTOR_DATA_TYPE_STRING(data_type, size)
@@ -413,3 +414,5 @@ void direct_convolution_2d_1x1(__read_only image2d_t weight, __read_only image2d
 	if (leaky_or_linear) y[3] = select(0.1f * y[3], y[3], y[3] > (float4)(0));
 	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[3]);
 }
+
+

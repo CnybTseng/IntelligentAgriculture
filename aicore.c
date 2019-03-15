@@ -17,137 +17,318 @@ the terms of the BSD license (see the COPYING file).
 #include <errno.h>
 #include <time.h>
 #include <unistd.h>
+#include <string.h>
 #include "aicore.h"
 #include "znet.h"
 #include "list.h"
 #include "fifo.h"
-
-#define CACHE_IMAGE_NUMBER							8
-#define NETWORK_INPUT_WIDTH							416
-#define NETWORK_INPUT_HEIGHT						416
+#include "image.h"
+#include "zutils.h"
+#include "cl_wrapper.h"
 
 typedef enum {
 	THREAD_RUNNING,
 	THREAD_DEAD
-} THREAD_STATUS;
+} thread_status_t;
 
-static void *layers[24];
-static znet *net = NULL;
-static pthread_once_t module_create_once_control = PTHREAD_ONCE_INIT;
-static int init_status;
-static pthread_t image_enqueue_tid;
-static pthread_t image_process_tid;
-static pthread_t image_dequeue_tid;
-static THREAD_STATUS thread_status;
-static ai_core_param core_param;
-static Fifo *raw_image_queue = NULL;
-static Fifo *normalized_image_queue = NULL;
-static Fifo *output_image_queue = NULL;
-// static char *image_input_queue_input_buffer = NULL;
-// static char *image_input_queue_output_buffer = NULL;
-// static char *image_output_queue_input_buffer = NULL;
-// static char *image_output_queue_output_buffer = NULL;
+typedef struct {
+	int image_width;
+	int image_height;
+	int standard_width;
+	int standard_height;
+	int cache_num;
+	void *layers[24];
+	znet *net;
+	int init_status;
+	pthread_t dnn_inference_tid;
+	thread_status_t thread_status;
+	Fifo *image_queue;
+	char *image_queue_read_buffer;
+	char *image_queue_write_buffer;
+	Fifo *object_queue;
+	char *object_queue_read_buffer;
+	char *object_queue_write_buffer;
+	image_standardizer *standardizer;
+	float threshold;
+} ai_core_param_t;
+
+static ai_core_param_t core_param;
+static pthread_once_t core_create_once_control = PTHREAD_ONCE_INIT;
 
 static void ai_core_init_routine();
-// static void create_image_fifo();
-static int create_image_enqueue_thread();
-static int create_image_process_thread();
-static int create_image_dequeue_thread();
-static void *image_enqueue_thread(void *param);
-static void *image_process_thread(void *param);
-static void *image_dequeue_thread(void *param);
+static void **create_dnn();
+static int create_dnn_inference_thread();
+static void *dnn_inference_thread(void *param);
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+static void *create_standard_image_object();
+#endif
 static void wait_for_thread_dead(pthread_t tid);
-static unsigned int roundup_power_of_2(unsigned int a);
+static void clear_image_queue();
+static void clear_object_queue();
+static void save_standard_image(void *image, int width, int height, const char *filename);
 
-int ai_core_init(void *param)
+#ifdef OPENCL
+cl_wrapper wrapper;
+#endif
+
+int ai_core_init(unsigned int width, unsigned int height)
 {
-	if (param) {
-		core_param.image_width = ((ai_core_param *)param)->image_width;
-		core_param.image_height = ((ai_core_param *)param)->image_height;
-	} else {
-		core_param.image_width = 1920;
-		core_param.image_height = 1080;
+#ifdef OPENCL	
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		core_param.init_status = AIC_OPENCL_INIT_FAIL;
+		return core_param.init_status;
 	}
+	cl_print_device_info(wrapper, CL_DEVICE_EXTENSIONS);
+#endif	
+	core_param.image_width = width;
+	core_param.image_height = height;
+	pthread_once(&core_create_once_control, &ai_core_init_routine);
 	
-	pthread_once(&module_create_once_control, &ai_core_init_routine);
-	
-	return init_status;
+	return core_param.init_status;
 }
 
-int ai_core_push_image(const char *bmp, size_t size)
+int ai_core_send_image(const char *const rgb24, size_t size)
 {
-	printf("image size %d\n", size);
+	void *standard_image = NULL;
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	standard_image = create_standard_image_object();
+#else
+	standard_image = calloc(core_param.standard_width * core_param.standard_height * 3, sizeof(float));
+#endif
+	if (!standard_image) return AIC_ALLOCATE_FAIL;
+	
+ 	standardize_image_io(core_param.standardizer, (unsigned char *)rgb24, core_param.image_width,
+ 		core_param.image_height, standard_image);
+ 	memcpy(core_param.image_queue_read_buffer, &standard_image, sizeof(void *));
+
+	int timer = 11;
+	const struct timespec req = {0, 100000};
+	const unsigned int request_size = roundup_power_of_2(sizeof(void *));
+	while (--timer) {
+		unsigned int write_size = fifo_put(core_param.image_queue, core_param.image_queue_read_buffer, request_size);
+		if (write_size == request_size) break;
+		nanosleep(&req, NULL);
+	}
+	
+	if (0 == timer) return AIC_ENQUEUE_FAIL;
 	return AIC_OK;
 }
 
-size_t ai_core_pull_image(char *bmp)
+size_t ai_core_fetch_object(object_t *const object, size_t number, float threshold)
 {
-	return 0;
+	int timer = 11;
+	const struct timespec req = {0, 100000};
+	const int request_size = roundup_power_of_2(sizeof(list));	
+	while (--timer) {
+		int read_size = fifo_get(core_param.object_queue, core_param.object_queue_write_buffer, request_size);
+		if (read_size == request_size) break;
+		nanosleep(&req, NULL);
+	}
+	
+	if (0 == timer) return 0;
+	core_param.threshold = threshold;
+	
+	size_t counter = 0;
+	list *object_list = make_list();
+	memcpy(object_list, core_param.object_queue_write_buffer, sizeof(list));
+	node *n = object_list->head;
+	while (n) {
+		detection *det = (detection *)n->val;
+		if (det->objectness < threshold) {
+			n = n->next;
+			continue;
+		}
+		
+		printf("objectness:%.5f ", det->objectness);
+		int maybe = 0;
+		for (int i = 0; i < det->classes; ++i) {
+			if (det->probabilities[i] < threshold) continue;
+			if (maybe > 0) printf(",");
+			printf("%s:%.0f%%", "cordyceps", det->probabilities[i] * 100);
+			++maybe;
+		}
+		
+		if (maybe) printf("\n");
+		int left    = (int)((det->bbox.x - det->bbox.w / 2) * core_param.image_width);		
+		int right   = (int)((det->bbox.x + det->bbox.w / 2) * core_param.image_width);
+		int _top    = (int)((det->bbox.y - det->bbox.h / 2) * core_param.image_height);
+		int _bottom = (int)((det->bbox.y + det->bbox.h / 2) * core_param.image_height);
+		int top = core_param.image_height - 1 - _bottom;
+		int bottom = core_param.image_height - 1 - _top;
+		
+		if (left < 0) left = 0;
+		if (left > core_param.image_width - 1) left = core_param.image_width - 1;
+		if (right < 0) right = 0;
+		if (right > core_param.image_width - 1) right = core_param.image_width - 1;
+		if (top < 0) top = 0;
+		if (top > core_param.image_height - 1) top = core_param.image_height - 1;
+		if (bottom < 0) bottom = 0;
+		if (bottom > core_param.image_height - 1) bottom = core_param.image_height - 1;
+		
+		object[counter].x = left;
+		object[counter].y = top;
+		object[counter].w = right - left + 1;
+		object[counter].h = bottom - top + 1;
+		object[counter].class = CORDYCEPS;
+		
+		++counter;
+		if (counter > number) break;
+		n = n->next;
+	}
+
+	free_detections(object_list);
+	return counter;
 }
 
 void ai_core_free()
 {
-	thread_status = THREAD_DEAD;
-	wait_for_thread_dead(image_enqueue_tid);
-	wait_for_thread_dead(image_process_tid);
-	wait_for_thread_dead(image_dequeue_tid);
-	znet_destroy(net);
-	fifo_delete(raw_image_queue);
-	fifo_delete(normalized_image_queue);
-	fifo_delete(output_image_queue);
+	core_param.thread_status = THREAD_DEAD;
+	wait_for_thread_dead(core_param.dnn_inference_tid);
+	if (core_param.net) {
+		znet_destroy(core_param.net);
+		core_param.net = NULL;
+	}
+	
+	if (core_param.image_queue) {
+		clear_image_queue();
+		fifo_delete(core_param.image_queue);
+		core_param.image_queue = NULL;
+	}
+	
+	if (core_param.image_queue_read_buffer) {
+		free(core_param.image_queue_read_buffer);
+		core_param.image_queue_read_buffer = NULL;
+	}
+	
+	if (core_param.image_queue_write_buffer) {
+		free(core_param.image_queue_write_buffer);
+		core_param.image_queue_write_buffer = NULL;
+	}
+	
+	if (core_param.object_queue) {
+		clear_object_queue();
+		fifo_delete(core_param.object_queue);
+		core_param.object_queue = NULL;
+	}
+	
+	if (core_param.object_queue_read_buffer) {
+		free(core_param.object_queue_read_buffer);
+		core_param.object_queue_read_buffer = NULL;
+	}
+	
+	if (core_param.object_queue_write_buffer) {
+		free(core_param.object_queue_write_buffer);
+		core_param.object_queue_write_buffer = NULL;
+	}
+	
+	if (core_param.standardizer) {
+		free_image_standardizer(core_param.standardizer);
+		core_param.standardizer = NULL;
+	}
+	
+#ifdef OPENCL
+	cl_destroy_wrapper(wrapper);
+#endif	
 }
 
-int create_image_enqueue_thread()
+int create_dnn_inference_thread()
 {
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	
-	int ret = pthread_create(&image_enqueue_tid, &attr, image_enqueue_thread, NULL);
+	int ret = pthread_create(&core_param.dnn_inference_tid, &attr, dnn_inference_thread, NULL);
 	if (0 != ret) {
 		fprintf(stderr, "pthread_create[%s:%d].\n", __FILE__, __LINE__);
-		thread_status = THREAD_DEAD;
+		core_param.thread_status = THREAD_DEAD;
 		return -1;
 	}
 	
-	return 0;
-}
-
-int create_image_process_thread()
-{
-	pthread_attr_t attr;
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	
-	int ret = pthread_create(&image_process_tid, &attr, image_process_thread, NULL);
-	if (0 != ret) {
-		fprintf(stderr, "pthread_create[%s:%d].\n", __FILE__, __LINE__);
-		thread_status = THREAD_DEAD;
-		return -1;
-	}
-	
-	return 0;
-}
-
-int create_image_dequeue_thread()
-{
-	pthread_attr_t attr;
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	
-	int ret = pthread_create(&image_dequeue_tid, &attr, image_dequeue_thread, NULL);
-	if (0 != ret) {
-		fprintf(stderr, "pthread_create[%s:%d].\n", __FILE__, __LINE__);
-		thread_status = THREAD_DEAD;
-		return -1;
-	}
-		
 	return 0;
 }
 
 void ai_core_init_routine()
 {
-	int nlayers = sizeof(layers) / sizeof(layers[0]);
+	core_param.standard_width = 416;
+	core_param.standard_height = 416;
+	core_param.cache_num = 8;
+	core_param.net = NULL;
+	core_param.init_status = -INT_MAX;
+	core_param.image_queue = NULL;
+	core_param.image_queue_read_buffer = NULL;
+	core_param.image_queue_write_buffer = NULL;
+	core_param.object_queue = NULL;
+	core_param.object_queue_read_buffer = NULL;
+	core_param.object_queue_write_buffer = NULL;
+	core_param.standardizer = NULL;
+	core_param.threshold = 0.5f;
+	
+	void **layers = create_dnn();
+	int nlayers = sizeof(core_param.layers) / sizeof(core_param.layers[0]);
+	
+	core_param.net = znet_create(layers, nlayers, "agriculture.weights");
+	if (!core_param.net) {
+		core_param.init_status = AIC_NETWORK_INIT_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.image_queue = fifo_alloc(roundup_power_of_2(sizeof(void *)) * core_param.cache_num);
+	if (!core_param.image_queue) {
+		core_param.init_status = AIC_FIFO_ALLOC_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.image_queue_read_buffer = calloc(roundup_power_of_2(sizeof(void *)), 1);
+	if (!core_param.image_queue_read_buffer) {
+		core_param.init_status = AIC_ALLOCATE_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.image_queue_write_buffer = calloc(roundup_power_of_2(sizeof(void *)), 1);
+	if (!core_param.image_queue_write_buffer) {
+		core_param.init_status = AIC_ALLOCATE_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.object_queue = fifo_alloc(roundup_power_of_2(sizeof(list) * core_param.cache_num));
+	if (!core_param.object_queue) {
+		core_param.init_status = AIC_FIFO_ALLOC_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.object_queue_read_buffer = calloc(roundup_power_of_2(sizeof(list)), 1);
+	if (!core_param.object_queue_read_buffer) {
+		core_param.init_status = AIC_ALLOCATE_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.object_queue_write_buffer = calloc(roundup_power_of_2(sizeof(list)), 1);
+	if (!core_param.object_queue_write_buffer) {
+		core_param.init_status = AIC_ALLOCATE_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.standardizer = create_image_standardizer(core_param.image_width, core_param.image_height,
+		core_param.standard_width, core_param.standard_height, 3);
+	if (!core_param.standardizer) {
+		core_param.init_status = AIC_IMAGE_STANDARDIZER_INIT_FAIL;
+		return ai_core_free();
+	}
+	
+	core_param.thread_status = THREAD_RUNNING;
+	if (create_dnn_inference_thread()) {
+		core_param.init_status = AIC_THREAD_CREATE_FAIL;
+		return ai_core_free();
+	}
+
+	core_param.init_status = AIC_OK;
+}
+
+void **create_dnn()
+{
+	void **layers = core_param.layers;
 	dim3 output_size;
 	
 	int bigger_mask[] = {3, 4, 5};
@@ -157,7 +338,7 @@ void ai_core_init_routine()
 	const int classes = 1;
 	const int object_tensor_depth = (4 + 1 + classes) * scales;
 	
-	dim3 input_size = {NETWORK_INPUT_WIDTH, NETWORK_INPUT_HEIGHT, 3};
+	dim3 input_size = {core_param.standard_width, core_param.standard_height, 3};
 	layers[0] = make_convolutional_layer(LEAKY, input_size, 3, 16, 1, 1, 1, 1, &output_size);
 	input_size = output_size;
 	layers[1] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
@@ -221,74 +402,90 @@ void ai_core_init_routine()
 	
 	input_size = output_size;
 	layers[23] = make_yolo_layer(input_size, 1, 3, 6, classes, smaller_mask, anchor_boxes);
-
-	net = znet_create(layers, nlayers, "agriculture.weights");
-	if (!net) {
-		init_status = AIC_INIT_FAIL;
-		return;
-	}
 	
-	raw_image_queue = fifo_alloc(roundup_power_of_2(core_param.image_width * core_param.image_height * 3 * CACHE_IMAGE_NUMBER));
-	if (!raw_image_queue) {
-		init_status = AIC_ALLOCATE_FAIL;
-		return;
-	}
-	
-	normalized_image_queue = fifo_alloc(roundup_power_of_2(NETWORK_INPUT_WIDTH * NETWORK_INPUT_HEIGHT * 3 * CACHE_IMAGE_NUMBER));
-	if (!normalized_image_queue) {
-		init_status = AIC_ALLOCATE_FAIL;
-		return;
-	}
-	
-	output_image_queue = fifo_alloc(roundup_power_of_2(core_param.image_width * core_param.image_height * 3 * CACHE_IMAGE_NUMBER));
-	if (!output_image_queue) {
-		init_status = AIC_ALLOCATE_FAIL;
-		return;
-	}
-	
-	thread_status = THREAD_RUNNING;
-	if (create_image_enqueue_thread() || create_image_process_thread() || create_image_dequeue_thread()) {
-		init_status = AIC_INIT_FAIL;
-		return;
-	}
-	
-	init_status = AIC_OK;
-	znet_architecture(net);
+	return layers;
 }
 
-void *image_enqueue_thread(void *param)
+void *dnn_inference_thread(void *param)
 {
-	struct timespec req = {0, 100000000};
-	while (thread_status == THREAD_RUNNING) {
-		nanosleep(&req, NULL);
+	image input;
+	void *standard_image = NULL;
+	const unsigned int request_read = roundup_power_of_2(sizeof(void *));
+	const unsigned int request_write = roundup_power_of_2(sizeof(list));
+	const struct timespec req = {0, 1000};
+	while (core_param.thread_status == THREAD_RUNNING) {
+		unsigned int read_size = fifo_get(core_param.image_queue, core_param.image_queue_write_buffer, request_read);
+		if (read_size != request_read) {
+			nanosleep(&req, NULL);
+			continue;
+		}
+
+		memcpy(&standard_image, core_param.image_queue_write_buffer, sizeof(void *));
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
+		input.data = standard_image;
+#else
+		input.d_data = standard_image;
+#endif
+		znet_inference(core_param.net, &input);
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
+		free(standard_image);
+#else
+		clReleaseMemObject(standard_image);
+#endif		
+		list *detections = get_detections(core_param.net, core_param.threshold, core_param.image_width, core_param.image_height);	
+		list *bests = soft_nms(detections, 2.5);
+		
+		memcpy(core_param.object_queue_read_buffer, bests, sizeof(list));
+		unsigned int write_size = fifo_put(core_param.object_queue, core_param.object_queue_read_buffer, request_write);
+		if (write_size != request_write) {
+			fprintf(stderr, "fifo_put fail[%s:%d].\n", __FILE__, __LINE__);
+			free_detections(bests);
+		}
+		
+		free_detections(detections);
 	}
 	
 	return 0;
 }
 
-void *image_process_thread(void *param)
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+void *create_standard_image_object()
 {
-	struct timespec req = {0, 100000000};
-	while (thread_status == THREAD_RUNNING) {
-		nanosleep(&req, NULL);
-	}
+	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
 	
-	return 0;
-}
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = core_param.standard_width;
+	image_desc.image_height = core_param.standard_height;
+	
+	cl_int errcode;
+	cl_mem standard_image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		return 0;
+	}
 
-void *image_dequeue_thread(void *param)
-{
-	struct timespec req = {0, 100000000};
-	while (thread_status == THREAD_RUNNING) {
-		nanosleep(&req, NULL);
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {core_param.standard_width, core_param.standard_height, 1};
+	float fill_color[] = {0.5f, 0.5f, 0.5f, 0};
+	clEnqueueFillImage(wrapper.command_queue, standard_image, fill_color, origin, region, 0, NULL, NULL);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clEnqueueFillImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 	}
 	
-	return 0;
+	return standard_image;
 }
+#endif
 
 void wait_for_thread_dead(pthread_t tid)
 {
 	int timer = 1000;
+	const struct timespec req = {0, 10000000};
 	while (timer--) {
 		int ret = pthread_kill(tid, 0);
 		if (ESRCH == ret) {
@@ -298,24 +495,88 @@ void wait_for_thread_dead(pthread_t tid)
 			fprintf(stderr, "signal is invalid[%s:%d].\n", __FILE__, __LINE__);
 			return;
 		} else {
+			nanosleep(&req, NULL);
 			continue;
 		}
 	}
 }
 
-unsigned int roundup_power_of_2(unsigned int a)
+void clear_image_queue()
 {
-	unsigned int position;
-	int i;
+	const int request_size = roundup_power_of_2(sizeof(void *));
+	while (fifo_len(core_param.image_queue)) {
+		while (fifo_get(core_param.image_queue, core_param.image_queue_write_buffer, request_size) != request_size);
+		printf("clear image queue...\n");
+		void *standard_image = NULL;
+		memcpy(&standard_image, core_param.image_queue_write_buffer, sizeof(void *));
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
+		free(standard_image);
+#else
+		clReleaseMemObject(standard_image);
+#endif	
+	}
+	printf("clear image queue over!\n");
+}
+
+void clear_object_queue()
+{
+	const int request_size = roundup_power_of_2(sizeof(list));
+	while (fifo_len(core_param.object_queue)) {
+		while (fifo_get(core_param.object_queue, core_param.object_queue_write_buffer, request_size) != request_size);
+		printf("clear object queue...\n");
+		list *object_list = make_list();
+		memcpy(object_list, core_param.object_queue_write_buffer, sizeof(list));
+		free_detections(object_list);
+	}
+	printf("clear object queue over!\n");
+}
+
+void save_standard_image(void *image, int width, int height, const char *filename)
+{
+#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
+	char *red = calloc(width * height, sizeof(unsigned char));
+	if (!red) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		return;
+	}
 	
-	if (a == 0) {
-		return 0;
+	for (int i = 0; i < width * height; ++i) {
+		red[i] = (unsigned char)(((float *)image)[i] * 255);
+	}
+	
+	bitmap *bmp = create_bmp((const char *)red, width, height, 8);
+	save_bmp(bmp, "standard.bmp");
+	free(red);
+	delete_bmp(bmp);
+#else
+	char *rgb24 = calloc(width * height * 3, sizeof(unsigned char));
+	if (!rgb24) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		return;
 	}
 
-	position = 0;
-	for (i = a; i != 0; i >>= 1) {
-		position++;
+	cl_int errcode;
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {width, height, 1};
+	size_t row_pitch, slice_pitch;
+	float *h_image = clEnqueueMapImage(wrapper.command_queue, image, CL_TRUE, CL_MAP_READ,
+		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
+
+	row_pitch = row_pitch >> 2;
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; ++x) {
+			rgb24[y * width * 3 + x * 3 + 2] = (unsigned char)(h_image[y * row_pitch + (x << 2) + 0] * 255);
+			rgb24[y * width * 3 + x * 3 + 1] = (unsigned char)(h_image[y * row_pitch + (x << 2) + 1] * 255);
+			rgb24[y * width * 3 + x * 3 + 0] = (unsigned char)(h_image[y * row_pitch + (x << 2) + 2] * 255);
+		}
 	}
 
-	return (unsigned int)(1 << position);
+	cl_event event;
+	clEnqueueUnmapMemObject(wrapper.command_queue, image, h_image, 0, NULL, &event);
+	
+	bitmap *bmp = create_bmp((const char *)rgb24, width, height, 24);
+	save_bmp(bmp, "standard.bmp");
+	free(rgb24);
+	delete_bmp(bmp);
+#endif
 }

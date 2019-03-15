@@ -39,8 +39,11 @@ cl_wrapper cl_create_wrapper(cl_int *errcode)
 	if (CL_SUCCESS != *errcode) return wrapper;
 
 	cl_context_properties context_properties[] = {
-		(cl_context_properties)CL_CONTEXT_PLATFORM,
-		(cl_context_properties)wrapper.platform, 0
+#if 0
+		CL_GL_CONTEXT_KHR, (cl_context_properties)eglGetCurrentContext(),
+		CL_WGL_HDC_KHR, (cl_context_properties)eglGetCurrentDisplay(),
+#endif		
+		CL_CONTEXT_PLATFORM, (cl_context_properties)wrapper.platform, 0
 	};
 	
 	wrapper.context = clCreateContext(context_properties, num_entries, &wrapper.device, NULL, NULL, errcode);
@@ -84,6 +87,23 @@ cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, con
 		program = cl_create_program_with_source(wrapper.device, wrapper.context, filename, options, errcode);
 		if (!program) return program;
 		*errcode = cl_save_binary_program(wrapper.device, program, binary_filename);
+	}
+	
+	return program;
+}
+
+cl_program cl_make_wrapper_program_from_buffer(cl_wrapper wrapper, char *buffer, const char *options, cl_int *errcode)
+{
+	cl_program program = clCreateProgramWithSource(wrapper.context, 1, (const char **)&buffer, NULL, errcode);
+	
+	if (!program || CL_SUCCESS != *errcode) return program;
+	
+	*errcode = clBuildProgram(program, 1, &wrapper.device, options, NULL, NULL);
+	if (CL_SUCCESS != *errcode) {
+		char buildinfo[16384];
+		clGetProgramBuildInfo(program, wrapper.device, CL_PROGRAM_BUILD_LOG, sizeof(buildinfo), buildinfo, NULL);
+		fprintf(stderr, "clGetProgramBuildInfo:\n%s\n", buildinfo);
+		clReleaseProgram(program);
 	}
 	
 	return program;

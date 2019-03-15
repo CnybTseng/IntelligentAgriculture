@@ -15,11 +15,16 @@ the terms of the BSD license (see the COPYING file).
 #ifndef _AICORE_H_
 #define _AICORE_H_
 
-#define AIC_OK                0
-#define AIC_ALLOCATE_FAIL    -1
-#define AIC_FILE_NOT_EXIST   -2
-#define AIC_PUSH_FAIL        -3
-#define AIC_INIT_FAIL        -4
+#define AIC_OK                              0
+#define AIC_ALLOCATE_FAIL                  -1
+#define AIC_FILE_NOT_EXIST                 -2
+#define AIC_NETWORK_INIT_FAIL              -3
+#define AIC_FIFO_ALLOC_FAIL                -4
+#define AIC_IMAGE_STANDARDIZER_INIT_FAIL   -5
+#define AIC_THREAD_CREATE_FAIL             -5
+#define AIC_ENQUEUE_FAIL                   -6
+#define AIC_DEQUEUE_FAIL                   -7
+#define AIC_OPENCL_INIT_FAIL               -8      
 
 #include <stddef.h>
 
@@ -42,34 +47,48 @@ extern "C"
 #endif
 #endif
 
-/** @typedef struct ai_core_param.
- ** @brief 初始化AICore模块的参数结构.
+/** @typedef enum class_t
+ ** @brief 枚举物体类别
+ **/
+typedef enum {
+	CORDYCEPS
+} class_t;
+
+/** @typedef struct object_t
+ ** @brief 物体的结构构体定义.
  **/
 typedef struct {
-	int image_width;
-	int image_height;
-} ai_core_param;
+	int x;			// 物体左上角横坐标.
+	int y;			// 物体左上角纵坐标.
+	int w;			// 物体宽度.
+	int h;			// 物体高度.
+	class_t class;	// 类别ID.
+} object_t;
 
 /** @brief 初始化AICore模块.
+ ** @param width 图像宽度.
+ ** @param height 图像高度.
  ** @return 如果初始化成功,返回AIC_OK.
  **         如果初始化失败,返回错误码.
  **/
-AICORE_EXPORT int ai_core_init(void *);
+AICORE_EXPORT int ai_core_init(unsigned int width, unsigned int height);
 
-/** @brief 将位图推送到AICore模块的队列缓冲区.
- ** @param bmp Bitmap格式图像数据.
- ** @param size 位图字节大小.size是位图文件头,信息头,调色板和图像数据大小总和.
- ** @return 如果推送成功,返回AIC_OK.
- **         如果推送失败,返回错误码.
+/** @brief 将图像放入AICore模块的队列缓冲区.
+ ** @param rgb24 RGB24格式图像数据.
+ ** @param size 图像数据字节大小.
+ ** @return 如果发送成功,返回AIC_OK.
+ **         如果发送失败,返回错误码.
  **/
-AICORE_EXPORT int ai_core_push_image(const char *bmp, size_t size);
+AICORE_EXPORT int ai_core_send_image(const char *const rgb24, size_t size);
 
-/** @brief 从AICore模块的队列中获取包含检测结果的位图.检测到的物体将以包围框标注.
- ** @param bmp Bitmap格式图像数据.
- ** @return 返回位图大小.在bmp不为空的情况下,如果获取成功,返回的位图大小等于位图文件头,信息头,调色板和
- **         图像数据大小总和,如果获取失败,返回0.在bmp为空的情况下,返回存储位图需要的缓冲区大小.
+/** @brief 从AICore模块获取检测到的物体.
+ ** @param object 物体buffer.
+ ** @param number 最多返回的物体个数.如果置信度超过阈值的物体多于需要返回的最大个数,则返回置信度最靠前的number个物体.
+ ** @param threshold 候选物体的置信度阈值,取值范围为[0,1],值越高判断地越严格.
+ ** @return 如果获取成功,返回实际检测到的物体个数.
+ **         如果获取失败,返回错误码.
  **/
-AICORE_EXPORT size_t ai_core_pull_image(char *bmp);
+AICORE_EXPORT size_t ai_core_fetch_object(object_t *const object, size_t number, float threshold);
 
 /** @brief 释放AICore模块所有资源.
  **/

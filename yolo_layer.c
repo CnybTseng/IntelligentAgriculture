@@ -169,13 +169,14 @@ void get_yolo_layer_detections(yolo_layer *layer, znet *net, int imgw, int imgh,
 			det->probabilities = get_yolo_prob(prob_vol, i, layer->output_size.w, layer->output_size.h,
 				layer->classes, obj_slc[i]);
 			det->objectness = obj_slc[i];
-			list_add_tail(l, det);		
+			list_add_tail(l, det);
 		}
 	}
 }
 
 void free_yolo_layer_detections(list *l)
 {
+	if (!l) return;
 	node *nd = l->head;
 	while (nd) {
 		detection *det = (detection *)nd->val;

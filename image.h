@@ -23,6 +23,10 @@ void vertical_mirror(image *img);
 void swap_channel(image *img);
 image_standardizer *create_image_standardizer(int width, int height, int standard_width, int standard_height, int nchannels);
 image *standardize_image(image_standardizer *standardizer, bitmap *bmp);
+image *standardize_image_rgb24(image_standardizer *standardizer, const unsigned char *const rgb24,
+	unsigned int width, unsigned int height);
+void standardize_image_io(image_standardizer *standardizer, const unsigned char *const rgb24,
+	unsigned int width, unsigned int height, void *output);
 void free_image_standardizer(image_standardizer *standardizer);
 
 #ifdef __cplusplus

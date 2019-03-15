@@ -10,6 +10,9 @@
 #include "route_layer.h"
 #include "resample_layer.h"
 #include "yolo_layer.h"
+#include "zutils.h"
+
+extern char BINARY_FILENAME_TO_START(agriculture, weights);
 
 typedef void (*print_layer_info_t)(void *layer, int id);
 typedef void (*set_layer_input_t)(void *layer, void *input);
@@ -43,6 +46,7 @@ struct znet {
 static int convnet_parse_input_size(znet *net);
 static int convnet_parse_layer(znet *net);
 static int convnet_parse_weights(znet *net);
+static int convnet_parse_weights_from_buffer(znet *net);
 
 #ifdef OPENCL
 cl_wrapper wrapper;
@@ -108,7 +112,7 @@ znet *znet_create(void *layers[], int nlayers, const char *weight_filename)
 	if (convnet_parse_input_size(net)) goto cleanup;
 	if (convnet_parse_layer(net)) goto cleanup;
 	
-	if (convnet_parse_weights(net)) {
+	if (convnet_parse_weights_from_buffer(net)) {
 		cleanup:znet_destroy(net);
 		return NULL;
 	}
@@ -192,7 +196,7 @@ void znet_destroy(znet *net)
 #ifdef NNPACK
 	pthreadpool_destroy(net->threadpool);
 	nnp_deinitialize();
-#endif	
+#endif
 
 	free(net);
 	net = NULL;
@@ -344,6 +348,42 @@ int convnet_parse_weights(znet *net)
 	}
 	
 	fclose(fp);
+	
+	return 0;
+}
+
+int convnet_parse_weights_from_buffer(znet *net)
+{	
+	int major;
+	int minor;
+	int revision;
+	unsigned long long seen;
+	
+	char *ptr = &BINARY_FILENAME_TO_START(agriculture, weights);
+	
+	major = *((int *)ptr);
+	ptr += sizeof(int);
+	minor = *((int *)ptr);
+	ptr += sizeof(int);
+	revision = *((int *)ptr);
+	ptr += sizeof(int);
+	
+	if ((major * 10 + minor) >= 2 && major < 1000 && minor < 1000) {
+		seen = *((unsigned long long *)ptr);
+		ptr += sizeof(unsigned long long);
+	} else {
+		seen = *((int *)ptr);
+		ptr += sizeof(int);
+	}
+	
+	printf("version %d.%d.%d, seen %u.\n", major, minor, revision, (unsigned int)seen);
+	for (int i = 0; i < net->nlayers; ++i) {
+		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
+		if (type == CONVOLUTIONAL) {
+			convolutional_layer *layer = (convolutional_layer*)net->layers[i];
+			load_convolutional_layer_weights_from_buffer(layer, &ptr);
+		}
+	}
 	
 	return 0;
 }

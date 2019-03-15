@@ -18,8 +18,11 @@ static void maxpool_thread(struct maxpool_thread_param *param, size_t batch_size
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
+extern char BINARY_FILENAME_TO_START(maxpool, cl);
+extern char BINARY_FILENAME_TO_END(maxpool, cl);
 
 struct maxpool_gpu_context {
+	char *program_buffer;
 	cl_program program;
 	cl_kernel kernel;
 	cl_mem d_input;
@@ -253,7 +256,25 @@ maxpool_gpu_context *create_maxpool_gpu_context(maxpool_layer *layer)
 	context->input_image_height = layer->input_size.h;
 	context->output_image_width = layer->output_size.w * context->channel_blocks;
 	context->output_image_height = layer->output_size.h;
+#ifndef USE_CL_PROGRAM_BINARY	
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(maxpool, cl) - &BINARY_FILENAME_TO_START(maxpool, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
 	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(maxpool, cl), size);
+	context->program_buffer[size] = '\0';
+	
+	cl_int errcode;
+	char options[] = "";
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
 	cl_int errcode;
 	char options[] = "";
 	context->program = cl_make_wrapper_program(wrapper, "maxpool.cl", options, &errcode);
@@ -261,7 +282,7 @@ maxpool_gpu_context *create_maxpool_gpu_context(maxpool_layer *layer)
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "maxpool_2x2", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -327,9 +348,11 @@ void forward_maxpool_layer_gpu(maxpool_layer *layer)
 void free_maxpool_gpu_context(maxpool_gpu_context *context)
 {
 	if (context) {
+		free(context->program_buffer);
 		clReleaseMemObject(context->d_output);
 		clReleaseProgram(context->program);
 		clReleaseKernel(context->kernel);
+		free(context);
 	}
 }
 #endif

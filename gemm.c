@@ -14,14 +14,34 @@
 #	include "cl_wrapper.h"
 #endif
 #include "gemm.h"
+#include "zutils.h"
 
-static void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
+struct gemm_context {
+#ifdef OPENCL
+	char *program_buffer;
+	cl_program program;
+	cl_kernel kernel;
+	cl_mem d_A;
+	cl_mem d_B;
+	cl_mem d_C;
+#endif
+	int transa;
+	int transb;
+	int m;
+	int n;
+	int k;
+	int round_up_m;
+	int round_up_n;
+	int round_up_k;
+};
+
+static void gemm_nn(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
                     float *B, int ldb, float beta, float *C, int ldc);
-static void gemm_tn(int m, int n, int k, float alpha, float *A, int lda,
+static void gemm_tn(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
                     float *B, int ldb, float beta, float *C, int ldc);
-static void gemm_nt(int m, int n, int k, float alpha, float *A, int lda,
+static void gemm_nt(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
                     float *B, int ldb, float beta, float *C, int ldc);
-static void gemm_tt(int m, int n, int k, float alpha, float *A, int lda,
+static void gemm_tt(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
                     float *B, int ldb, float beta, float *C, int ldc);
 
 #ifdef __INTEL_SSE__
@@ -33,7 +53,10 @@ static void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
 #endif
 #ifdef OPENCL
 extern cl_wrapper wrapper;
-void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
+extern char BINARY_FILENAME_TO_START(blas, cl);
+extern char BINARY_FILENAME_TO_END(blas, cl);
+
+void gemm_nn_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc);
 void gemm_nn_cl_sm(int m, int n, int k, float alpha, float *A, int lda,
                    float *B, int ldb, float beta, float *C, int ldc);
@@ -43,9 +66,76 @@ void gemm_nn_cl_tp(int m, int n, int k, float alpha, float *A, int lda,
 void gemm_nn_cl_ion(int m, int n, int k, float alpha, float *A, int lda,
                     float *B, int ldb, float beta, float *C, int ldc);
 #endif
-void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,				
+void gemm_nt_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,				
                 float *B, int ldb, float beta, float *C, int ldc);				
-#endif					
+#endif
+
+gemm_context *create_gemm_context(int transa, int transb, int m, int n, int k)
+{
+	gemm_context *context = calloc(1, sizeof(gemm_context));
+	if (!context) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		return context;
+	}
+	
+	context->transa = transa;
+	context->transb = transb;
+	context->m = m;
+	context->n = n;
+	context->k = k;
+#if defined(OPENCL) && !defined(WINOGRAD_CONVOLUTION)
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(blas, cl) - &BINARY_FILENAME_TO_START(blas, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(blas, cl), size);
+	context->program_buffer[size] = '\0';
+	
+	cl_int errcode;
+	char options[] = "-cl-fast-relaxed-math";
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "sgemm_nn_8x8", &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+
+	context->round_up_m = round_up_multiple_of_8(m);
+	context->round_up_n = round_up_multiple_of_8(n);
+	context->round_up_k = round_up_multiple_of_8(k);
+	
+	context->d_A = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
+		context->round_up_m * context->round_up_k * sizeof(float), NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateBuffer fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+
+	context->d_B = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
+		context->round_up_k * context->round_up_n * sizeof(float), NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateBuffer fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	context->d_C = clCreateBuffer(wrapper.context, CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
+		context->round_up_m * context->round_up_n * sizeof(float), NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateBuffer fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		cleanup:free_gemm_context(context);
+		return 0;
+	}
+#endif
+	return context;
+}					
 					
 /** @brief 通用的矩阵乘法,C=alhpa*A*B+beta*C.相乘前对A或B转置或共轭转置暂不支持.
  ** @param transa 转置(transa=1)或不转置(transa=0)矩阵A.
@@ -63,7 +153,7 @@ void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,
  ** @param C 矩阵C.
  ** @param ldc 矩阵C的行步长.
  **/
-void gemm(int transa, int transb, int m, int n, int k, float alpha,
+void gemm(gemm_context *context, int transa, int transb, int m, int n, int k, float alpha,
           float *A, int lda, float *B, int ldb, float beta, float *C, int ldc)
 {
 #if !defined OPENCL
@@ -89,17 +179,32 @@ void gemm(int transa, int transb, int m, int n, int k, float alpha,
 #endif
 #endif	
 	if (!transa && !transb) {
-		gemm_nn(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+		gemm_nn(context, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 	} else if (transa && !transb) {
-		gemm_tn(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+		gemm_tn(context, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 	} else if (!transa && transb) {
-		gemm_nt(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+		gemm_nt(context, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 	} else {
-		gemm_tt(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+		gemm_tt(context, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 	}
 }
 
-void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
+void free_gemm_context(gemm_context *context)
+{
+	if (!context) return;
+#if defined(OPENCL) && !defined(WINOGRAD_CONVOLUTION)
+	free(context->program_buffer);
+	clReleaseMemObject(context->d_A);
+	clReleaseMemObject(context->d_B);
+	clReleaseMemObject(context->d_C);
+	clReleaseProgram(context->program);
+	clReleaseKernel(context->kernel);
+#endif
+	free(context);
+	context = NULL;
+}
+
+void gemm_nn(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
              float *B, int ldb, float beta, float *C, int ldc)
 {
 #if !defined OPENCL
@@ -119,17 +224,17 @@ void gemm_nn(int m, int n, int k, float alpha, float *A, int lda,
 		}
 	}
 #else
-	gemm_nn_cl(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+	gemm_nn_cl(context, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 #endif
 }
 			 
-void gemm_tn(int m, int n, int k, float alpha, float *A, int lda,
+void gemm_tn(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
              float *B, int ldb, float beta, float *C, int ldc)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }		 
 			 
-void gemm_nt(int m, int n, int k, float alpha, float *A, int lda,
+void gemm_nt(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
              float *B, int ldb, float beta, float *C, int ldc)
 {
 #if !defined OPENCL
@@ -144,11 +249,11 @@ void gemm_nt(int m, int n, int k, float alpha, float *A, int lda,
 		}
 	}
 #else
-	gemm_nt_cl(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+	gemm_nt_cl(context, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 #endif
 }		 
 			 
-void gemm_tt(int m, int n, int k, float alpha, float *A, int lda,
+void gemm_tt(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
              float *B, int ldb, float beta, float *C, int ldc)
 {
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
@@ -170,40 +275,18 @@ void gemm_nn_neon(int m, int n, int k, float alpha, float *A, int lda,
 #endif	
 
 #ifdef OPENCL
-void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
+void gemm_nn_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc)
 {	
 	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		return;
-	}
-	
-	cl_kernel kernel = cl_make_wrapper_kernel(wrapper, program, "sgemm_nn_8x8", &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		return;
-	}
-
-	const int _m = ((m + 7) / 8) * 8;
-	const int _n = ((n + 7) / 8) * 8;
-	const int _k = ((k + 7) / 8) * 8;
+	const int _m = context->round_up_m;
+	const int _n = context->round_up_n;
+	const int _k = context->round_up_k;
 	const int _lda = _k;
 	const int _ldb = _n;
 	const int _ldc = _n;
-	
-	cl_mem d_A = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
-		_m * _k * sizeof(float), NULL, &errcode);
 
-	cl_mem d_B = clCreateBuffer(wrapper.context, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
-		_k * _n * sizeof(float), NULL, &errcode);
-
-	cl_mem d_C = clCreateBuffer(wrapper.context, CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
-		_m * _n * sizeof(float), NULL, &errcode);
-
-	float *h_A = clEnqueueMapBuffer(wrapper.command_queue, d_A, CL_TRUE, CL_MAP_WRITE,
+	float *h_A = clEnqueueMapBuffer(wrapper.command_queue, context->d_A, CL_TRUE, CL_MAP_WRITE,
 		0, _m * _k * sizeof(float), 0, NULL, NULL, &errcode);
 	for (int y = 0; y < m; ++y) {
 		for (int x = 0; x < k; ++x) {
@@ -218,9 +301,9 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 			h_A[y * _k + x] = 0;
 		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_A, h_A, 0, NULL, NULL);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_A, h_A, 0, NULL, NULL);
 	
-	float *h_B = clEnqueueMapBuffer(wrapper.command_queue, d_B, CL_TRUE, CL_MAP_WRITE,
+	float *h_B = clEnqueueMapBuffer(wrapper.command_queue, context->d_B, CL_TRUE, CL_MAP_WRITE,
 		0, _k * _n * sizeof(float), 0, NULL, NULL, &errcode);
 	for (int y = 0; y < k; ++y) {
 		for (int x = 0; x < n; ++x) {
@@ -235,9 +318,9 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 			h_B[y * _n + x] = 0;
 		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_B, h_B, 0, NULL, NULL);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_B, h_B, 0, NULL, NULL);
 	
-	float *h_C = clEnqueueMapBuffer(wrapper.command_queue, d_C, CL_TRUE, CL_MAP_WRITE,
+	float *h_C = clEnqueueMapBuffer(wrapper.command_queue, context->d_C, CL_TRUE, CL_MAP_WRITE,
 		0, _m * _n * sizeof(float), 0, NULL, NULL, &errcode);
 	for (int y = 0; y < m; ++y) {
 		for (int x = 0; x < n; ++x) {
@@ -252,19 +335,19 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 			h_C[y * _n + x] = 0;
 		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_C, h_C, 0, NULL, NULL);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_C, h_C, 0, NULL, NULL);
 	
-	errcode  = clSetKernelArg(kernel, 0, sizeof(int), &_m);
-	errcode |= clSetKernelArg(kernel, 1, sizeof(int), &_n); 
-	errcode |= clSetKernelArg(kernel, 2, sizeof(int), &_k); 
-	errcode |= clSetKernelArg(kernel, 3, sizeof(float), &alpha);
-	errcode |= clSetKernelArg(kernel, 4, sizeof(cl_mem), &d_A); 
-	errcode |= clSetKernelArg(kernel, 5, sizeof(int), &_lda); 
-	errcode |= clSetKernelArg(kernel, 6, sizeof(cl_mem), &d_B); 
-	errcode |= clSetKernelArg(kernel, 7, sizeof(int), &_ldb);
-	errcode |= clSetKernelArg(kernel, 8, sizeof(float), &beta);
-	errcode |= clSetKernelArg(kernel, 9, sizeof(cl_mem), &d_C); 
-	errcode |= clSetKernelArg(kernel, 10, sizeof(int), &_ldc); 
+	errcode  = clSetKernelArg(context->kernel, 0, sizeof(int), &_m);
+	errcode |= clSetKernelArg(context->kernel, 1, sizeof(int), &_n); 
+	errcode |= clSetKernelArg(context->kernel, 2, sizeof(int), &_k); 
+	errcode |= clSetKernelArg(context->kernel, 3, sizeof(float), &alpha);
+	errcode |= clSetKernelArg(context->kernel, 4, sizeof(cl_mem), &context->d_A); 
+	errcode |= clSetKernelArg(context->kernel, 5, sizeof(int), &_lda); 
+	errcode |= clSetKernelArg(context->kernel, 6, sizeof(cl_mem), &context->d_B); 
+	errcode |= clSetKernelArg(context->kernel, 7, sizeof(int), &_ldb);
+	errcode |= clSetKernelArg(context->kernel, 8, sizeof(float), &beta);
+	errcode |= clSetKernelArg(context->kernel, 9, sizeof(cl_mem), &context->d_C); 
+	errcode |= clSetKernelArg(context->kernel, 10, sizeof(int), &_ldc); 
 	
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clSetKernelArg fail!\n");
@@ -274,7 +357,7 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 	cl_event event;
 	cl_uint work_dim = 2;
 	size_t global_work_size[] = {_n >> 3, _m >> 3};
-	errcode = clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
+	errcode = clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
 #ifdef CL_PROFILING_ENABLE	
@@ -286,21 +369,14 @@ void gemm_nn_cl(int m, int n, int k, float alpha, float *A, int lda,
 	printf("gemm_nn_cl(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
 #endif
 
-	h_C = clEnqueueMapBuffer(wrapper.command_queue, d_C, CL_TRUE, CL_MAP_READ,
+	h_C = clEnqueueMapBuffer(wrapper.command_queue, context->d_C, CL_TRUE, CL_MAP_READ,
 		0, _m * _n * sizeof(float), 0, NULL, NULL, &errcode);
 	for (int y = 0; y < m; ++y) {
 		for (int x = 0; x < n; ++x) {
 			C[y * n + x] = h_C[y * _n + x];
 		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_C, h_C, 0, NULL, NULL);
-
-	clReleaseMemObject(d_A);
-	clReleaseMemObject(d_B);
-	clReleaseMemObject(d_C);
-
-	clReleaseProgram(program);
-	clReleaseKernel(kernel);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_C, h_C, 0, NULL, NULL);
 }
 
 void gemm_nn_cl_sm(int m, int n, int k, float alpha, float *A, int lda,
@@ -308,7 +384,7 @@ void gemm_nn_cl_sm(int m, int n, int k, float alpha, float *A, int lda,
 {	
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
+	cl_program program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -445,7 +521,7 @@ void gemm_nn_cl_tp(int m, int n, int k, float alpha, float *A, int lda,
 {
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
+	cl_program program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -590,7 +666,7 @@ void gemm_nn_cl_ion(int m, int n, int k, float alpha, float *A, int lda,
 {
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
+	cl_program program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;
@@ -743,12 +819,12 @@ void gemm_nn_cl_ion(int m, int n, int k, float alpha, float *A, int lda,
 }
 #endif
 
-void gemm_nt_cl(int m, int n, int k, float alpha, float *A, int lda,				
+void gemm_nt_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,				
                 float *B, int ldb, float beta, float *C, int ldc)
 {
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
-	cl_program program = cl_make_wrapper_program(wrapper, "blas.cl", options, &errcode);
+	cl_program program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;

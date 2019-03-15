@@ -4,8 +4,11 @@
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
+extern char BINARY_FILENAME_TO_START(resample, cl);
+extern char BINARY_FILENAME_TO_END(resample, cl);
 
 struct resample_context {
+	char *program_buffer;
 	cl_program program;
 	cl_kernel kernel;
 	cl_mem d_input;
@@ -195,7 +198,25 @@ resample_context *create_resample_context(resample_layer *layer)
 	context->input_image_height = layer->input_size.h;
 	context->output_image_width = context->channel_blocks * layer->output_size.w;
 	context->output_image_height = layer->output_size.h;
+#ifndef USE_CL_PROGRAM_BINARY	
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(resample, cl) - &BINARY_FILENAME_TO_START(resample, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
 	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(resample, cl), size);
+	context->program_buffer[size] = '\0';
+	
+	cl_int errcode;
+	char options[] = "-cl-fast-relaxed-math";
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
 	context->program = cl_make_wrapper_program(wrapper, "resample.cl", options, &errcode);
@@ -203,7 +224,7 @@ resample_context *create_resample_context(resample_layer *layer)
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	if (layer->upsample) {
 		context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "upsampleB1", &errcode);
 	} else {
@@ -271,6 +292,7 @@ void forward_resample_layer_gpu(resample_layer *layer)
 void free_resample_context(resample_context *context)
 {
 	if (context) {
+		free(context->program_buffer);
 		clReleaseMemObject(context->d_output);
 		clReleaseProgram(context->program);
 		clReleaseKernel(context->kernel);

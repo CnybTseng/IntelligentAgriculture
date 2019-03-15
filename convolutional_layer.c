@@ -30,8 +30,11 @@ static void forward_convolutional_layer_gpu(void *_layer, znet *net);
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
-cl_mem d_input;
+extern char BINARY_FILENAME_TO_START(convolution, cl);
+extern char BINARY_FILENAME_TO_END(convolution, cl);
+
 struct direct_convolution_context {
+	char *program_buffer;
 	cl_program program;
 	cl_kernel kernel;
 	cl_mem d_input;
@@ -72,7 +75,7 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
 		return layer;
 	}
-	
+
 	layer->type = CONVOLUTIONAL;
 	layer->activation = activation;
 	layer->input_size = input_size;
@@ -112,6 +115,7 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 #endif
 	layer->dcc = NULL;
 #endif
+	layer->gc = NULL;
 	
 	if (output_size) {
 		*output_size = layer->output_size;
@@ -154,7 +158,12 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 		}
 	}
 #endif
-	
+
+	const int m = layer->nfilters;
+	const int n = layer->output_size.w * layer->output_size.h;
+	const int k = layer->filter_size * layer->filter_size * layer->input_size.c;
+	layer->gc = create_gemm_context(0, 0, m, n, k);
+
 	layer->scales = calloc(nfilters, sizeof(float));
 	if (!layer->scales) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
@@ -191,7 +200,7 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
 		cleanup:free_convolution_layer(layer);
 		return 0;
 	}
-	
+
 	return (void *)layer;
 }
 
@@ -254,6 +263,7 @@ void free_convolution_layer(void *_layer)
 		free_direct_convolution_context(layer->dcc);
 	}
 #endif
+	free_gemm_context(layer->gc);
 	
 	free(layer);
 	layer = NULL;
@@ -289,7 +299,7 @@ void set_convolutional_layer_input(void *_layer, void *input)
 	layer->input = input;
 #else
 	if (3 == layer->filter_size) {
-		set_winograd_convolution_input(layer->itc, input);d_input = input;
+		set_winograd_convolution_input(layer->itc, input);
 	} else if (1 == layer->filter_size) {
 		layer->dcc->d_input = input;
 	}
@@ -353,7 +363,7 @@ void forward_convolutional_layer(void *_layer, znet *net)
 		total += duration;
 		printf("im2col_cpu: %f ms, total %f ms.\n", duration, total);
 		
-		gemm(0, 0, m, n, k, 1, A, k, B, n, 1, C, n);
+		gemm(layer->gc, 0, 0, m, n, k, 1, A, k, B, n, 1, C, n);
 	}
 
 #ifndef MERGE_BATCHNORM_TO_CONV	
@@ -382,7 +392,7 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 		fread(layer->rolling_mean, sizeof(float), layer->nfilters, fp);
 		fread(layer->rolling_variance, sizeof(float), layer->nfilters, fp);
 	}
-	
+
 	fread(layer->weights, sizeof(float), layer->nweights, fp);
 #ifdef MERGE_BATCHNORM_TO_CONV
 	if (layer->batch_norm) merge_batchnorm_params(layer);
@@ -396,6 +406,51 @@ void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp)
 		load_direct_convolution_weight(layer->dcc, layer->weights, layer->biases);
 #endif
 	} else {;}
+}
+
+void load_convolutional_layer_weights_from_buffer(convolutional_layer *layer, char **buffer)
+{
+	char *ptr = *buffer;
+	for (int i = 0; i < layer->nbiases; ++i) {
+		layer->biases[i] = *((float *)ptr);
+		ptr += sizeof(float);
+	}
+
+	if (layer->batch_norm) {
+		for (int i = 0; i < layer->nfilters; ++i) {
+			layer->scales[i] = *((float *)ptr);
+			ptr += sizeof(float);
+		}
+		
+		for (int i = 0; i < layer->nfilters; ++i) {
+			layer->rolling_mean[i] = *((float *)ptr);
+			ptr += sizeof(float);
+		}
+		
+		for (int i = 0; i < layer->nfilters; ++i) {
+			layer->rolling_variance[i] = *((float *)ptr);
+			ptr += sizeof(float);
+		}
+	}
+	
+	for (int i = 0; i < layer->nweights; ++i) {
+		layer->weights[i] = *((float *)ptr);
+		ptr += sizeof(float);
+	}
+
+	*buffer = ptr;
+#ifdef MERGE_BATCHNORM_TO_CONV
+	if (layer->batch_norm) merge_batchnorm_params(layer);
+#endif
+	if (3 == layer->filter_size) {
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+		transform_weight(layer->wtc, layer->weights, layer->biases, NULL);
+#endif
+	} else if (1 == layer->filter_size) {
+#ifdef OPENCL
+		load_direct_convolution_weight(layer->dcc, layer->weights, layer->biases);
+#endif
+	} else {;}	
 }
 
 int convolutional_output_width(convolutional_layer *layer)
@@ -486,9 +541,11 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 	for (int i = 0; i < 2048; ++i) zeros[i] = 0;
 
 	if (3 != layer->filter_size) {
+#ifdef NNPACK_PROFILE_ENABLE
 		static double total = 0;
 		struct timeval t1, t2; 
 		gettimeofday(&t1, NULL);
+#endif
 		nnp_convolution_inference(
 			nnp_convolution_algorithm_direct,
 			nnp_convolution_transform_strategy_tuple_based,
@@ -509,10 +566,12 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			znet_threadpool(net),
 			NULL
 		);
+#ifdef NNPACK_PROFILE_ENABLE
 		gettimeofday(&t2, NULL);
 		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 		total += duration;
 		printf("nnp_convolution_algorithm_direct: %f ms, total %f ms.\n", duration, total);
+#endif
 	} else {
 		if (NULL == layer->transformed_kernel) {
 			nnp_convolution_inference(
@@ -559,10 +618,11 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 				NULL
 			);
 		}
-		
+#ifdef NNPACK_PROFILE_ENABLE		
 		static double total = 0;
 		struct timeval t1, t2; 
 		gettimeofday(&t1, NULL);
+#endif
 		nnp_convolution_inference(
 			layer->algorithm,
 			nnp_convolution_transform_strategy_reuse,
@@ -583,10 +643,12 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			znet_threadpool(net),
 			NULL
 		);
+#ifdef NNPACK_PROFILE_ENABLE
 		gettimeofday(&t2, NULL);
 		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 		total += duration;
 		printf("nnp_convolution_algorithm_wt8x8_fp16: %f ms, total %f ms.\n", duration, total);
+#endif
 	}
 
 #ifndef MERGE_BATCHNORM_TO_CONV	
@@ -709,14 +771,31 @@ direct_convolution_context *create_direct_convolution_context(convolutional_laye
 		strcat(options, " -DLINEAR");
 		break;
 	}
+#ifndef USE_CL_PROGRAM_BINARY	
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[size] = '\0';
 
+	cl_int errcode;
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
 	cl_int errcode;
 	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "direct_convolution_2d_1x1", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -806,6 +885,7 @@ void forward_convolutional_layer_1x1(convolutional_layer *layer)
 void free_direct_convolution_context(direct_convolution_context *context)
 {
 	if (context) {
+		free(context->program_buffer);
 		clReleaseMemObject(context->d_biases);
 		clReleaseMemObject(context->d_weights);
 		clReleaseMemObject(context->d_output);

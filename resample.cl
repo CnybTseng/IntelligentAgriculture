@@ -16,3 +16,5 @@ void upsampleB1(__read_only image2d_t input, __write_only image2d_t output,
 
 	write_imagef(output, (int2)(gx, output_pixel_y), val);
 }
+
+

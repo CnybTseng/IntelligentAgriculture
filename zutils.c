@@ -132,3 +132,25 @@ int round_up_division_4(int x)
 {
 	return (x + 3) >> 2;
 }
+
+unsigned int roundup_power_of_2(unsigned int a)
+{
+	unsigned int position;
+	int i;
+	
+	if (a == 0) {
+		return 0;
+	}
+
+	position = 0;
+	for (i = a; i != 0; i >>= 1) {
+		position++;
+	}
+
+	return (unsigned int)(1 << position);
+}
+
+unsigned int round_up_multiple_of_8(unsigned int x)
+{
+	return ((x + 7) >> 3) << 3;
+}

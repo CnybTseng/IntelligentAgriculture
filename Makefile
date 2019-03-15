@@ -1,5 +1,6 @@
 ARCH?=arm
 GPU?=1
+WINOGRAD?=1
 NNPACK?=0
 CLBLAST=0
 
@@ -14,9 +15,18 @@ CPPS=$(wildcard *.cpp)
 CPPNDS=$(notdir $(CPPS))
 CPPOBJS=$(patsubst %.cpp,%.o,$(CPPNDS))
 
+ifeq ($(GPU),1)
+CLS=$(wildcard *.cl)
+CLNDS=$(notdir $(CLS))
+CLOBJS=$(patsubst %.cl,%.o,$(CLNDS))
+CLNAMES=$(patsubst %.cl,%,$(CLNDS))
+endif
+
 EXEOBJ=test_znet.o test_aicore.o
-ALLOBJS=$(COBJS) $(CPPOBJS)
-OBJS=$(filter-out $(EXEOBJ),$(ALLOBJS))
+CL_KERNEL_FILES=$(CLNAMES)
+BINOBJ=agriculture.o $(CLOBJS)
+ALLOBJS=$(COBJS) $(CPPOBJS) $(BINOBJ)
+OBJS=$(filter-out $(EXEOBJ) $(BINOBJ),$(ALLOBJS))
 
 ifeq ($(ARCH),x86)
 SLIB=aicore.dll
@@ -48,6 +58,16 @@ AR=$(ANDROID_TOOLCHAIN_PATH)/arm-linux-androideabi/bin/ar
 ARFLAGS=rcs
 endif
 
+ifeq ($(ARCH),x86)
+OBJCOPY=objcopy
+OT=pe-i386
+BA=i386
+else ifeq ($(ARCH),arm)
+OBJCOPY=$(ANDROID_TOOLCHAIN_PATH)/arm-linux-androideabi/bin/objcopy
+OT=elf32-littlearm
+BA=arm
+endif
+
 INC=
 ifeq ($(ARCH),x86)
 INC+= -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/include" \
@@ -58,11 +78,15 @@ INC+= -I../thirdparty/opencl-2.0/include -I../thirdparty/NNPACK/include \
 -I../thirdparty/clblast/include
 endif
 
-CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=120 -g  -fopenmp -DMERGE_BATCHNORM_TO_CONV -DAICORE_BUILD_DLL
+CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=120 -g  -fopenmp \
+-DMERGE_BATCHNORM_TO_CONV -DAICORE_BUILD_DLL -DUSE_CL_PROGRAM_BINARY
 ifeq ($(GPU),1)
-CFLAGS+= -DOPENCL -DWINOGRAD_CONVOLUTION -DCL_PROFILING_ENABLE
+CFLAGS+= -DOPENCL -D_CL_PROFILING_ENABLE
 ifeq ($(CLBLAST),1)
 CFLAGS+= -DCLBLAST
+endif
+ifeq ($(WINOGRAD),1)
+CFLAGS+= -DWINOGRAD_CONVOLUTION
 endif
 else ifeq ($(NNPACK),1)
 CFLAGS+= -DNNPACK
@@ -81,13 +105,16 @@ LIB+= -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0/lib/Win32" \
 LIBS+= -lpthread
 else ifeq ($(ARCH),arm)
 LIB+= -L../thirdparty/opencl-2.0/lib/armeabi-v7a -L../thirdparty/NNPACK/lib \
--L../thirdparty/clblast/lib
+-L../thirdparty/clblast/lib -L../thirdparty/egl-1.5/lib
 LIBS+= -lm
 endif
 ifeq ($(GPU),1)
 LIBS+= -lOpenCL
 ifeq ($(CLBLAST),1)
 LIBS+= -lclblast
+endif
+ifeq ($(ARCH),arm)
+LIBS+= -lEGL
 endif
 else ifeq ($(NNPACK),1)
 LIBS+= -lpthreadpool -lnnpack -lcpuinfo -lclog -llog
@@ -101,23 +128,30 @@ LDFLAGS+= -march=armv7-a -Wl,--fix-cortex-a8
 endif
 
 .PHONY:$(EXEC) all
-all:info $(SLIB) $(EXEC)
+all:info bin2obj $(SLIB) $(EXEC)
 
-test_znet$(EXE_SUFFIX):test_znet.o $(OBJS)
+test_znet$(EXE_SUFFIX):test_znet.o $(OBJS) agriculture.o $(CLOBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 test_aicore$(EXE_SUFFIX):test_aicore.o bitmap.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
-$(ALIB): $(OBJS)
+$(ALIB): $(OBJS) agriculture.o $(CLOBJS)
 	$(AR) $(ARFLAGS) $@ $^
 
-$(SLIB): $(OBJS)
+$(SLIB): $(OBJS) agriculture.o $(CLOBJS)
 	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS)
 
 %.o:%.c
 	$(CC) $(CFLAGS) -c $^
 
+bin2obj:
+	$(OBJCOPY) --input-target binary --output-target $(OT) --binary-architecture $(BA) agriculture.weights agriculture.o
+	@for target in $(CL_KERNEL_FILES);	\
+	do	\
+	$(OBJCOPY) --input-target binary --output-target $(OT) --binary-architecture $(BA) $$target.cl $$target.o;	\
+	done
+	
 info:
 	@echo objects:$(ALLOBJS)
 	

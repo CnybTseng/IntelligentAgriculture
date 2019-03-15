@@ -11,8 +11,11 @@
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
+extern char BINARY_FILENAME_TO_START(convolution, cl);
+extern char BINARY_FILENAME_TO_END(convolution, cl);
 
 struct weight_transform_context {
+	char *program_buffer;
 	cl_program program;
 	cl_kernel kernel;
 	cl_mem d_weight;
@@ -34,6 +37,7 @@ struct weight_transform_context {
 };
 
 struct input_transform_context {
+	char *program_buffer;
 	cl_program program;
 	cl_kernel kernel;
 	cl_mem d_input;
@@ -54,6 +58,7 @@ struct input_transform_context {
 };
 
 struct matrix_multiplication_context {
+	char *program_buffer;
 	cl_program program;
 	cl_kernel kernel;
 	weight_transform_context *wtc;
@@ -65,6 +70,7 @@ struct matrix_multiplication_context {
 };
 
 struct output_inverse_transform_context {
+	char *program_buffer;
 	cl_program program;
 	cl_kernel kernel;
 	matrix_multiplication_context *mmc;
@@ -113,7 +119,25 @@ weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE con
 	context->filter_size = 3;
 	context->filter_channels = filter_channels;
 	context->nfilters = nfilters;
+#ifndef USE_CL_PROGRAM_BINARY	
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
 	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[size] = '\0';
+	
+	cl_int errcode;
+	char options[] = "-cl-fast-relaxed-math";
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
 	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
@@ -121,7 +145,7 @@ weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE con
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "weight_transform_f4x4_3x3", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -276,6 +300,7 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 void free_weight_transform_context(weight_transform_context *context)
 {
 	if (context) {
+		free(context->program_buffer);
 		clReleaseMemObject(context->d_weight);
 		clReleaseMemObject(context->d_transformed_weight);
 		clReleaseMemObject(context->d_biases);
@@ -304,7 +329,25 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 	context->input_channels = input_channels;
 	context->stride = stride;
 	context->padding = padding;
+#ifndef USE_CL_PROGRAM_BINARY		
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
 	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[size] = '\0';
+	
+	cl_int errcode;
+	char options[] = "-cl-fast-relaxed-math";
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
 	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
@@ -312,7 +355,7 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "input_transform_f4x4_3x3", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -424,6 +467,7 @@ void transform_input(input_transform_context *context, float *transformed_input)
 void free_input_transform_context(input_transform_context *context)
 {
 	if (context) {
+		free(context->program_buffer);
 		clReleaseMemObject(context->d_transformed_input);
 		clReleaseProgram(context->program);
 		clReleaseKernel(context->kernel);
@@ -441,7 +485,25 @@ matrix_multiplication_context *create_matrix_multiplication_context(weight_trans
 	
 	context->wtc = wtc;
 	context->itc = itc;
+#ifndef USE_CL_PROGRAM_BINARY	
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
 	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[size] = '\0';
+	
+	cl_int errcode;
+	char options[] = "-cl-fast-relaxed-math";
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
 	cl_int errcode;
 	char options[] = "-cl-fast-relaxed-math";
 	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
@@ -449,7 +511,7 @@ matrix_multiplication_context *create_matrix_multiplication_context(weight_trans
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "matrix_multiply", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -513,8 +575,6 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	const int global_work_size_x = (ntiles + 3) >> 2;
 	const int global_work_size_y = context->output_channel_blocks * (context->wtc->tile_input_size * context->wtc->tile_input_size);
 	size_t global_work_size[] = {global_work_size_x, global_work_size_y};
-	printf("36x([%dx%d]x[%dx%d])\n", context->wtc->transformed_weight_image_height, context->wtc->transformed_weight_image_width / 36,
-		context->itc->transformed_input_image_height / 36, context->itc->transformed_input_image_width);
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
@@ -526,6 +586,8 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
+	printf("36x([%dx%d]x[%dx%d])\n", context->wtc->transformed_weight_image_height, context->wtc->transformed_weight_image_width / 36,
+		context->itc->transformed_input_image_height / 36, context->itc->transformed_input_image_width);
 	printf("GPU, matrix_multiply[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
 #endif
 	clReleaseEvent(event);
@@ -547,6 +609,7 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 void free_matrix_multiplication_context(matrix_multiplication_context *context)
 {
 	if (context) {
+		free(context->program_buffer);
 		clReleaseMemObject(context->d_output);
 		clReleaseProgram(context->program);
 		clReleaseKernel(context->kernel);
@@ -581,14 +644,31 @@ output_inverse_transform_context *create_output_inverse_transform_context(matrix
 		strcat(options, " -DLINEAR");
 		break;
 	}
+#ifndef USE_CL_PROGRAM_BINARY	
+	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
+	context->program_buffer = calloc(size + 1, sizeof(char));
+	if (!context->program_buffer) {
+		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		goto cleanup;
+	}
+	
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[size] = '\0';
 
+	cl_int errcode;
+	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+#else
 	cl_int errcode;
 	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-	
+#endif	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "inverse_output_transform_f4x4_3x3", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -682,6 +762,7 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 void free_output_inverse_transform_context(output_inverse_transform_context *context)
 {
 	if (context) {
+		free(context->program_buffer);
 		clReleaseMemObject(context->d_inverse_transformed_output);
 		clReleaseProgram(context->program);
 		clReleaseKernel(context->kernel);
