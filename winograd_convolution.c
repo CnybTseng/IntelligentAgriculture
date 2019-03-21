@@ -8,9 +8,12 @@
 #	include "cl_wrapper.h"
 #endif
 #include "zutils.h"
+#include "half.h"
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
+extern char BINARY_FILENAME_TO_START(cl_common, h);
+extern char BINARY_FILENAME_TO_END(cl_common, h);
 extern char BINARY_FILENAME_TO_START(convolution, cl);
 extern char BINARY_FILENAME_TO_END(convolution, cl);
 
@@ -119,33 +122,28 @@ weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE con
 	context->filter_size = 3;
 	context->filter_channels = filter_channels;
 	context->nfilters = nfilters;
-#ifndef USE_CL_PROGRAM_BINARY	
+	
+	size_t header_size = (size_t)(&BINARY_FILENAME_TO_END(cl_common, h) - &BINARY_FILENAME_TO_START(cl_common, h));
 	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
-	context->program_buffer = calloc(size + 1, sizeof(char));
+	context->program_buffer = calloc(header_size + size + 1, sizeof(char));
 	if (!context->program_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
-	context->program_buffer[size] = '\0';
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(cl_common, h), header_size);
+	memcpy(context->program_buffer + header_size, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[header_size + size] = '\0';
 	
 	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	char options[256] = "-cl-fast-relaxed-math -I.";
+	PARSE_PRECISION;
+	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-#else
-	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-#endif	
+	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "weight_transform_f4x4_3x3", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -166,7 +164,7 @@ weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE con
 	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 	
 	cl_image_desc weight_image_desc;
@@ -229,10 +227,10 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 	size_t weight_image_origin[] = {0, 0, 0};
 	size_t weight_image_region[] = {context->weight_image_width, context->weight_image_height, 1};
 	size_t image_row_pitch, image_slice_pitch;
-	float *h_weight = clEnqueueMapImage(wrapper.command_queue, context->d_weight, CL_TRUE, CL_MAP_WRITE, weight_image_origin,
+	MEM_MAP_PTR_TYPE *h_weight = clEnqueueMapImage(wrapper.command_queue, context->d_weight, CL_TRUE, CL_MAP_WRITE, weight_image_origin,
 		weight_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
 
-	image_row_pitch = image_row_pitch >> 2;
+	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
 	const int filter_slice_pitch = context->filter_size * context->filter_size;
 	for (int y = 0; y < context->nfilters; ++y) {
 		for (int g = 0; g < context->input_channel_blocks; ++g) {
@@ -242,7 +240,7 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 			for (int i = 0; i < context->filter_size * context->filter_size; ++i) {
 				for (int x = 0; x < filter_channel_in_group; ++x) {
 					h_weight[y * image_row_pitch + ((g * context->filter_size * context->filter_size + i) << 2) + x] =
-						ptr[x * filter_slice_pitch + i];
+						HOST_TO_DEVICE(ptr[x * filter_slice_pitch + i]);
 				}
 				for (int x = filter_channel_in_group; x < 4; ++x) {
 					h_weight[y * image_row_pitch + ((g * context->filter_size * context->filter_size + i) << 2) + x] = 0;
@@ -250,8 +248,8 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 			}
 		}
 	}	
-	cl_event event;
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_weight, h_weight, 0, NULL, &event);
+	
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_weight, h_weight, 0, NULL, NULL);
 
 	errcode  = clSetKernelArg(context->kernel, 0, sizeof(cl_mem), &context->d_weight);
 	errcode |= clSetKernelArg(context->kernel, 1, sizeof(cl_mem), &context->d_transformed_weight);
@@ -259,6 +257,7 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 	}
 	
+	cl_event event;
 	cl_uint work_dim = 2;
 	size_t work_group_size;
 	clGetKernelWorkGroupInfo(context->kernel, wrapper.device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &work_group_size, NULL);
@@ -280,21 +279,24 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 	
 	size_t biases_image_origin[] = {0, 0, 0};
 	size_t biases_image_region[] = {context->biases_image_width, 1, 1};
-	float *h_biases = clEnqueueMapImage(wrapper.command_queue, context->d_biases, CL_TRUE, CL_MAP_WRITE, biases_image_origin,
+	MEM_MAP_PTR_TYPE *h_biases = clEnqueueMapImage(wrapper.command_queue, context->d_biases, CL_TRUE, CL_MAP_WRITE, biases_image_origin,
 		biases_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	memcpy(h_biases, biases, image_row_pitch);
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_biases, h_biases, 0, NULL, &event);
+	for (int i = 0; i < context->nfilters; ++i) h_biases[i] = HOST_TO_DEVICE(biases[i]);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_biases, h_biases, 0, NULL, NULL);
 	
 	if (!transformed_weights) return;
 	size_t transformed_weight_image_origin[] = {0, 0, 0};
 	size_t transformed_weight_image_region[] = {context->transformed_weight_image_width, context->transformed_weight_image_height, 1};
-	float *h_transformed_weight = clEnqueueMapImage(wrapper.command_queue, context->d_transformed_weight, CL_TRUE, CL_MAP_READ,
+	MEM_MAP_PTR_TYPE *h_transformed_weight = clEnqueueMapImage(wrapper.command_queue, context->d_transformed_weight, CL_TRUE, CL_MAP_READ,
 		transformed_weight_image_origin, transformed_weight_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	image_row_pitch = image_row_pitch >> 2;
+	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
 	const int dst_row_pitch = (context->tile_input_size * context->tile_input_size) * (((context->filter_channels + 3) / 4) * 4);
-	for (int i = 0; i < context->nfilters; ++i)
-		memcpy(transformed_weights + i * dst_row_pitch, h_transformed_weight + i * image_row_pitch, dst_row_pitch * sizeof(float));
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_transformed_weight, h_transformed_weight, 0, NULL, &event);
+	for (int i = 0; i < context->nfilters; ++i) {
+		for (int j = 0; j < dst_row_pitch; ++j) {
+			transformed_weights[i * dst_row_pitch + j] = DEVICE_TO_HOST(h_transformed_weight[i * image_row_pitch + j]);
+		}
+	}
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_transformed_weight, h_transformed_weight, 0, NULL, NULL);
 }
 
 void free_weight_transform_context(weight_transform_context *context)
@@ -329,33 +331,28 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 	context->input_channels = input_channels;
 	context->stride = stride;
 	context->padding = padding;
-#ifndef USE_CL_PROGRAM_BINARY		
+	
+	size_t header_size = (size_t)(&BINARY_FILENAME_TO_END(cl_common, h) - &BINARY_FILENAME_TO_START(cl_common, h));	
 	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
-	context->program_buffer = calloc(size + 1, sizeof(char));
+	context->program_buffer = calloc(header_size + size + 1, sizeof(char));
 	if (!context->program_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
-	context->program_buffer[size] = '\0';
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(cl_common, h), header_size);
+	memcpy(context->program_buffer + header_size, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[header_size + size] = '\0';
 	
 	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	char options[256] = "-cl-fast-relaxed-math -I.";
+	PARSE_PRECISION;
+	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-#else
-	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-#endif	
+	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "input_transform_f4x4_3x3", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -376,7 +373,7 @@ input_transform_context *create_input_transform_context(WINOGRAD_CONV_TYPE conv,
 	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 	
 	cl_image_desc transformed_input_image_desc;
@@ -454,14 +451,16 @@ void transform_input(input_transform_context *context, float *transformed_input)
 	size_t image_row_pitch, image_slice_pitch;
 	size_t transformed_input_image_origin[] = {0, 0, 0};
 	size_t transformed_input_image_region[] = {context->transformed_input_image_width, context->transformed_input_image_height, 1};
-	float *h_transformed_input = clEnqueueMapImage(wrapper.command_queue, context->d_transformed_input, CL_TRUE, CL_MAP_READ,
+	MEM_MAP_PTR_TYPE *h_transformed_input = clEnqueueMapImage(wrapper.command_queue, context->d_transformed_input, CL_TRUE, CL_MAP_READ,
 		transformed_input_image_origin, transformed_input_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	image_row_pitch = image_row_pitch >> 2;
+	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
+	const int dst_row_pitch = context->transformed_input_image_width << 2;
 	for (int y = 0; y < context->transformed_input_image_height; ++y) {
-		memcpy(transformed_input + y * (context->transformed_input_image_width << 2),
-			h_transformed_input + y * image_row_pitch, (context->transformed_input_image_width << 2) * sizeof(float));
+		for (int x = 0; x < dst_row_pitch; ++x) {
+			transformed_input[y * dst_row_pitch + x] = DEVICE_TO_HOST(h_transformed_input[y * image_row_pitch + x]);
+		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_transformed_input, h_transformed_input, 0, NULL, &event);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_transformed_input, h_transformed_input, 0, NULL, NULL);
 }
 
 void free_input_transform_context(input_transform_context *context)
@@ -485,33 +484,28 @@ matrix_multiplication_context *create_matrix_multiplication_context(weight_trans
 	
 	context->wtc = wtc;
 	context->itc = itc;
-#ifndef USE_CL_PROGRAM_BINARY	
+	
+	size_t header_size = (size_t)(&BINARY_FILENAME_TO_END(cl_common, h) - &BINARY_FILENAME_TO_START(cl_common, h));
 	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
-	context->program_buffer = calloc(size + 1, sizeof(char));
+	context->program_buffer = calloc(header_size + size + 1, sizeof(char));
 	if (!context->program_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
-	context->program_buffer[size] = '\0';
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(cl_common, h), header_size);
+	memcpy(context->program_buffer + header_size, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[header_size + size] = '\0';
 	
 	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	char options[256] = "-cl-fast-relaxed-math -I.";
+	PARSE_PRECISION;
+	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-#else
-	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-#endif	
+	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "matrix_multiply", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -525,7 +519,7 @@ matrix_multiplication_context *create_matrix_multiplication_context(weight_trans
 	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 	
 	cl_image_desc output_image_desc;
@@ -596,14 +590,16 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	size_t output_image_origin[] = {0, 0, 0};
 	size_t output_image_region[] = {context->output_image_width, context->output_image_height, 1};
 	size_t image_row_pitch, image_slice_pitch;
-	float *h_output = clEnqueueMapImage(wrapper.command_queue, context->d_output, CL_TRUE, CL_MAP_READ,
+	MEM_MAP_PTR_TYPE *h_output = clEnqueueMapImage(wrapper.command_queue, context->d_output, CL_TRUE, CL_MAP_READ,
 		output_image_origin, output_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	image_row_pitch = image_row_pitch >> 2;
+	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
+	const int dst_row_pitch = context->output_image_width << 2;
 	for (int y = 0; y < context->output_image_height; ++y) {
-		memcpy(output + y * (context->output_image_width << 2), h_output + y * image_row_pitch,
-			(context->output_image_width << 2) * sizeof(float));
+		for (int x = 0; x < dst_row_pitch; ++x) {
+			output[y * dst_row_pitch + x] = DEVICE_TO_HOST(h_output[y * image_row_pitch + x]);
+		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_output, h_output, 0, NULL, &event);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_output, h_output, 0, NULL, NULL);
 }
 
 void free_matrix_multiplication_context(matrix_multiplication_context *context)
@@ -626,7 +622,7 @@ output_inverse_transform_context *create_output_inverse_transform_context(matrix
 	}
 	
 	context->mmc = mmc;
-	char options[256] = "-cl-fast-relaxed-math";
+	char options[256] = "-cl-fast-relaxed-math -I.";
 	switch (act) {
 	case RELU:
 		strcat(options, " -DRELU");
@@ -644,31 +640,27 @@ output_inverse_transform_context *create_output_inverse_transform_context(matrix
 		strcat(options, " -DLINEAR");
 		break;
 	}
-#ifndef USE_CL_PROGRAM_BINARY	
+	PARSE_PRECISION;
+	
+	size_t header_size = (size_t)(&BINARY_FILENAME_TO_END(cl_common, h) - &BINARY_FILENAME_TO_START(cl_common, h));
 	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
-	context->program_buffer = calloc(size + 1, sizeof(char));
+	context->program_buffer = calloc(header_size + size + 1, sizeof(char));
 	if (!context->program_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
-	context->program_buffer[size] = '\0';
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(cl_common, h), header_size);
+	memcpy(context->program_buffer + header_size, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[header_size + size] = '\0';
 
 	cl_int errcode;
-	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-#else
-	cl_int errcode;
-	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-#endif	
+	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "inverse_output_transform_f4x4_3x3", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -681,7 +673,7 @@ output_inverse_transform_context *create_output_inverse_transform_context(matrix
 	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 
 	cl_image_desc image_desc;
@@ -714,7 +706,6 @@ void get_inverse_transformed_output_image_size(output_inverse_transform_context 
 
 void inverse_transform_output(output_inverse_transform_context *context, float *inverse_transformed_output)
 {
-	cl_event event;
 	cl_int errcode;
 	errcode  = clSetKernelArg(context->kernel, 0, sizeof(cl_mem), &context->mmc->d_output);
 	errcode |= clSetKernelArg(context->kernel, 1, sizeof(cl_mem), &context->mmc->wtc->d_biases);
@@ -726,6 +717,7 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 	}
 	
+	cl_event event;
 	cl_uint work_dim = 2;
 	const int ntiles = context->mmc->itc->ntilesX * context->mmc->itc->ntilesY;
 	const int output_channel_blocks = context->mmc->output_channel_blocks;
@@ -749,14 +741,16 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 	size_t origin[] = {0, 0, 0};
 	size_t region[] = {context->inverse_transformed_output_image_width, context->inverse_transformed_output_image_height, 1};
 	size_t image_row_pitch, image_slice_pitch;
-	float *h_inverse_transformed_output = clEnqueueMapImage(wrapper.command_queue, context->d_inverse_transformed_output,
+	MEM_MAP_PTR_TYPE *h_inverse_transformed_output = clEnqueueMapImage(wrapper.command_queue, context->d_inverse_transformed_output,
 		CL_TRUE, CL_MAP_READ, origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	image_row_pitch = image_row_pitch >> 2;
+	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
+	const int dst_row_pitch = context->inverse_transformed_output_image_width << 2;
 	for (int y = 0; y < context->inverse_transformed_output_image_height; ++y) {
-		memcpy(inverse_transformed_output + y * (context->inverse_transformed_output_image_width << 2),
-			h_inverse_transformed_output + y * image_row_pitch, (context->inverse_transformed_output_image_width << 2) * sizeof(float));
+		for (int x = 0; x < dst_row_pitch; ++x) {
+			inverse_transformed_output[y * dst_row_pitch + x] = DEVICE_TO_HOST(h_inverse_transformed_output[y * image_row_pitch + x]);
+		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_inverse_transformed_output, h_inverse_transformed_output, 0, NULL, &event);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_inverse_transformed_output, h_inverse_transformed_output, 0, NULL, NULL);
 }
 
 void free_output_inverse_transform_context(output_inverse_transform_context *context)

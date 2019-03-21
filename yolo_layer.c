@@ -119,19 +119,18 @@ void forward_yolo_layer(void *_layer, znet *net)
 	memcpy(layer->output, layer->input, total * sizeof(float));
 #else
 	cl_int errcode;
-	cl_event event;
 	size_t origin[] = {0, 0, 0};
 	size_t input_image_width, input_image_height;
 	clGetImageInfo(layer->d_input, CL_IMAGE_WIDTH, sizeof(size_t), &input_image_width, NULL);
 	clGetImageInfo(layer->d_input, CL_IMAGE_HEIGHT, sizeof(size_t), &input_image_height, NULL);
 	size_t region[] = {input_image_width, input_image_height, 1};
 	size_t image_row_pitch, image_slice_pitch;
-	float *h_input = clEnqueueMapImage(wrapper.command_queue, layer->d_input, CL_TRUE, CL_MAP_WRITE,
+	MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, layer->d_input, CL_TRUE, CL_MAP_WRITE,
 		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	image_row_pitch = image_row_pitch >> 2;
+	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
 	nhwc_to_nchw_quad(h_input, layer->output, layer->output_size.w, layer->output_size.h,
 		layer->output_size.c, 1, image_row_pitch, layer->output_size.w);
-	clEnqueueUnmapMemObject(wrapper.command_queue, layer->d_input, h_input, 0, NULL, &event);
+	clEnqueueUnmapMemObject(wrapper.command_queue, layer->d_input, h_input, 0, NULL, NULL);
 #endif
 	int volume_per_scale = layer->output_size.w * layer->output_size.h * (4 + 1 + layer->classes);
 	if (znet_workmode(net) == INFERENCE) {

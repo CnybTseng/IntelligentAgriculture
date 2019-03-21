@@ -12,9 +12,9 @@ void upsampleB1(__read_only image2d_t input, __write_only image2d_t output,
 	const int input_pixel_y = output_pixel_y / stride;
 	
 	input_pixel_x += channel_block_id * input_width;
-	float4 val = read_imagef(input, (int2)(input_pixel_x, input_pixel_y));
+	DATA_TYPE4 val = READ_IMAGE(input, (int2)(input_pixel_x, input_pixel_y));
 
-	write_imagef(output, (int2)(gx, output_pixel_y), val);
+	WRITE_IMAGE(output, (int2)(gx, output_pixel_y), val);
 }
 
 

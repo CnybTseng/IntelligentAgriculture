@@ -26,10 +26,21 @@ the terms of the BSD license (see the COPYING file).
 #include "zutils.h"
 #include "cl_wrapper.h"
 
+typedef int (*lock_method)(pthread_mutex_t *mutex);
+typedef int (*unlock_method)(pthread_mutex_t *mutex);
+
 typedef enum {
 	THREAD_RUNNING,
 	THREAD_DEAD
 } thread_status_t;
+
+typedef struct {
+	void *data;
+	int busy;
+	pthread_mutex_t mutex;
+	lock_method lock;
+	unlock_method unlock;
+} memory_unit_t;
 
 typedef struct {
 	int image_width;
@@ -49,6 +60,8 @@ typedef struct {
 	char *object_queue_read_buffer;
 	char *object_queue_write_buffer;
 	image_standardizer *standardizer;
+	memory_unit_t mempry_pool[16];
+	int memory_pool_size;
 	float threshold;
 } ai_core_param_t;
 
@@ -62,9 +75,12 @@ static void *dnn_inference_thread(void *param);
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
 static void *create_standard_image_object();
 #endif
+static int init_memory_pool();
+static void *allocate_from_memory_pool();
+static void back_to_memory_pool(memory_unit_t *mem);
+static void free_memory_pool();
 static void wait_for_thread_dead(pthread_t tid);
-static void clear_image_queue();
-static void clear_object_queue();
+static void clear_object_list();
 static void save_standard_image(void *image, int width, int height, const char *filename);
 
 #ifdef OPENCL
@@ -77,32 +93,34 @@ int ai_core_init(unsigned int width, unsigned int height)
 	cl_int errcode;
 	wrapper = cl_create_wrapper(&errcode);
 	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper fail, error code:%d.\n", errcode);
 		core_param.init_status = AIC_OPENCL_INIT_FAIL;
 		return core_param.init_status;
 	}
-	cl_print_device_info(wrapper, CL_DEVICE_EXTENSIONS);
 #endif	
 	core_param.image_width = width;
 	core_param.image_height = height;
 	pthread_once(&core_create_once_control, &ai_core_init_routine);
+	system("rm -f *.cl.bin");
 	
 	return core_param.init_status;
 }
 
 int ai_core_send_image(const char *const rgb24, size_t size)
 {
-	void *standard_image = NULL;
-#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
-	standard_image = create_standard_image_object();
-#else
-	standard_image = calloc(core_param.standard_width * core_param.standard_height * 3, sizeof(float));
-#endif
+	void *standard_image = allocate_from_memory_pool();
 	if (!standard_image) return AIC_ALLOCATE_FAIL;
-	
+#ifdef CL_PROFILING_ENABLE
+	struct timeval t1, t2; 
+    gettimeofday(&t1, NULL);
+#endif
  	standardize_image_io(core_param.standardizer, (unsigned char *)rgb24, core_param.image_width,
  		core_param.image_height, standard_image);
  	memcpy(core_param.image_queue_read_buffer, &standard_image, sizeof(void *));
-
+#ifdef CL_PROFILING_ENABLE
+	gettimeofday(&t2, NULL);
+	printf("CPU & GPU standardize_image_io: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
+#endif
 	int timer = 11;
 	const struct timespec req = {0, 100000};
 	const unsigned int request_size = roundup_power_of_2(sizeof(void *));
@@ -112,7 +130,11 @@ int ai_core_send_image(const char *const rgb24, size_t size)
 		nanosleep(&req, NULL);
 	}
 	
-	if (0 == timer) return AIC_ENQUEUE_FAIL;
+	if (0 == timer) {
+		back_to_memory_pool(standard_image);
+		return AIC_ENQUEUE_FAIL;
+	}
+	
 	return AIC_OK;
 }
 
@@ -120,7 +142,7 @@ size_t ai_core_fetch_object(object_t *const object, size_t number, float thresho
 {
 	int timer = 11;
 	const struct timespec req = {0, 100000};
-	const int request_size = roundup_power_of_2(sizeof(list));	
+	const int request_size = roundup_power_of_2(sizeof(list *));	
 	while (--timer) {
 		int read_size = fifo_get(core_param.object_queue, core_param.object_queue_write_buffer, request_size);
 		if (read_size == request_size) break;
@@ -131,8 +153,8 @@ size_t ai_core_fetch_object(object_t *const object, size_t number, float thresho
 	core_param.threshold = threshold;
 	
 	size_t counter = 0;
-	list *object_list = make_list();
-	memcpy(object_list, core_param.object_queue_write_buffer, sizeof(list));
+	list *object_list = NULL;
+	memcpy(&object_list, core_param.object_queue_write_buffer, sizeof(list *));
 	node *n = object_list->head;
 	while (n) {
 		detection *det = (detection *)n->val;
@@ -192,7 +214,6 @@ void ai_core_free()
 	}
 	
 	if (core_param.image_queue) {
-		clear_image_queue();
 		fifo_delete(core_param.image_queue);
 		core_param.image_queue = NULL;
 	}
@@ -208,7 +229,7 @@ void ai_core_free()
 	}
 	
 	if (core_param.object_queue) {
-		clear_object_queue();
+		clear_object_list();
 		fifo_delete(core_param.object_queue);
 		core_param.object_queue = NULL;
 	}
@@ -227,6 +248,8 @@ void ai_core_free()
 		free_image_standardizer(core_param.standardizer);
 		core_param.standardizer = NULL;
 	}
+	
+	free_memory_pool();
 	
 #ifdef OPENCL
 	cl_destroy_wrapper(wrapper);
@@ -263,6 +286,7 @@ void ai_core_init_routine()
 	core_param.object_queue_read_buffer = NULL;
 	core_param.object_queue_write_buffer = NULL;
 	core_param.standardizer = NULL;
+	core_param.memory_pool_size = sizeof(core_param.mempry_pool) / sizeof(memory_unit_t);
 	core_param.threshold = 0.5f;
 	
 	void **layers = create_dnn();
@@ -292,19 +316,19 @@ void ai_core_init_routine()
 		return ai_core_free();
 	}
 	
-	core_param.object_queue = fifo_alloc(roundup_power_of_2(sizeof(list) * core_param.cache_num));
+	core_param.object_queue = fifo_alloc(roundup_power_of_2(sizeof(list *) * core_param.cache_num));
 	if (!core_param.object_queue) {
 		core_param.init_status = AIC_FIFO_ALLOC_FAIL;
 		return ai_core_free();
 	}
 	
-	core_param.object_queue_read_buffer = calloc(roundup_power_of_2(sizeof(list)), 1);
+	core_param.object_queue_read_buffer = calloc(roundup_power_of_2(sizeof(list *)), 1);
 	if (!core_param.object_queue_read_buffer) {
 		core_param.init_status = AIC_ALLOCATE_FAIL;
 		return ai_core_free();
 	}
 	
-	core_param.object_queue_write_buffer = calloc(roundup_power_of_2(sizeof(list)), 1);
+	core_param.object_queue_write_buffer = calloc(roundup_power_of_2(sizeof(list *)), 1);
 	if (!core_param.object_queue_write_buffer) {
 		core_param.init_status = AIC_ALLOCATE_FAIL;
 		return ai_core_free();
@@ -314,6 +338,12 @@ void ai_core_init_routine()
 		core_param.standard_width, core_param.standard_height, 3);
 	if (!core_param.standardizer) {
 		core_param.init_status = AIC_IMAGE_STANDARDIZER_INIT_FAIL;
+		return ai_core_free();
+	}
+	
+	int ret = init_memory_pool();
+	if (ret != AIC_OK) {
+		core_param.init_status = ret;
 		return ai_core_free();
 	}
 	
@@ -411,7 +441,7 @@ void *dnn_inference_thread(void *param)
 	image input;
 	void *standard_image = NULL;
 	const unsigned int request_read = roundup_power_of_2(sizeof(void *));
-	const unsigned int request_write = roundup_power_of_2(sizeof(list));
+	const unsigned int request_write = roundup_power_of_2(sizeof(list *));
 	const struct timespec req = {0, 1000};
 	while (core_param.thread_status == THREAD_RUNNING) {
 		unsigned int read_size = fifo_get(core_param.image_queue, core_param.image_queue_write_buffer, request_read);
@@ -427,21 +457,18 @@ void *dnn_inference_thread(void *param)
 		input.d_data = standard_image;
 #endif
 		znet_inference(core_param.net, &input);
-#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
-		free(standard_image);
-#else
-		clReleaseMemObject(standard_image);
-#endif		
+		back_to_memory_pool(standard_image);
+		
 		list *detections = get_detections(core_param.net, core_param.threshold, core_param.image_width, core_param.image_height);	
 		list *bests = soft_nms(detections, 2.5);
 		
-		memcpy(core_param.object_queue_read_buffer, bests, sizeof(list));
+		memcpy(core_param.object_queue_read_buffer, &bests, sizeof(list *));
 		unsigned int write_size = fifo_put(core_param.object_queue, core_param.object_queue_read_buffer, request_write);
 		if (write_size != request_write) {
 			fprintf(stderr, "fifo_put fail[%s:%d].\n", __FILE__, __LINE__);
 			free_detections(bests);
 		}
-		
+
 		free_detections(detections);
 	}
 	
@@ -482,6 +509,63 @@ void *create_standard_image_object()
 }
 #endif
 
+int init_memory_pool()
+{
+	for (int i = 0; i < core_param.memory_pool_size; ++i) {
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+		core_param.mempry_pool[i].data = create_standard_image_object();
+#else
+		core_param.mempry_pool[i].data = calloc(core_param.standard_width * core_param.standard_height * 3, sizeof(float));
+#endif
+		if (!core_param.mempry_pool[i].data) return AIC_ALLOCATE_FAIL;
+		core_param.mempry_pool[i].busy = 0;
+		if (0 != pthread_mutex_init(&core_param.mempry_pool[i].mutex, NULL)) {
+			fprintf(stderr, "pthread_mutex_init fail[%s:%d].\n", __FILE__, __LINE__);
+			return AIC_ALLOCATE_FAIL;
+		}
+		core_param.mempry_pool[i].lock = pthread_mutex_lock;
+		core_param.mempry_pool[i].unlock = pthread_mutex_unlock;
+	}
+	
+	return AIC_OK;
+}
+
+void *allocate_from_memory_pool()
+{
+	for (int i = 0; i < core_param.memory_pool_size; ++i) {
+		if (0 != core_param.mempry_pool[i].busy) continue;
+		core_param.mempry_pool[i].lock(&core_param.mempry_pool[i].mutex);
+		core_param.mempry_pool[i].busy = 1;
+		core_param.mempry_pool[i].unlock(&core_param.mempry_pool[i].mutex);
+		return core_param.mempry_pool[i].data;
+	}
+	
+	return (void *)(0);
+}
+
+void back_to_memory_pool(memory_unit_t *mem)
+{
+	for (int i = 0; i < core_param.memory_pool_size; ++i) {
+		if (mem != core_param.mempry_pool[i].data) continue;
+		core_param.mempry_pool[i].lock(&core_param.mempry_pool[i].mutex);
+		core_param.mempry_pool[i].busy = 0;
+		core_param.mempry_pool[i].unlock(&core_param.mempry_pool[i].mutex);
+		break;
+	}
+}
+
+void free_memory_pool()
+{
+	for (int i = 0; i < core_param.memory_pool_size; ++i) {
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+		clReleaseMemObject(core_param.mempry_pool[i].data);
+#else
+		free(core_param.mempry_pool[i].data);
+#endif	
+		pthread_mutex_destroy(&core_param.mempry_pool[i].mutex);
+	}
+}
+
 void wait_for_thread_dead(pthread_t tid)
 {
 	int timer = 1000;
@@ -501,31 +585,14 @@ void wait_for_thread_dead(pthread_t tid)
 	}
 }
 
-void clear_image_queue()
+void clear_object_list()
 {
-	const int request_size = roundup_power_of_2(sizeof(void *));
-	while (fifo_len(core_param.image_queue)) {
-		while (fifo_get(core_param.image_queue, core_param.image_queue_write_buffer, request_size) != request_size);
-		printf("clear image queue...\n");
-		void *standard_image = NULL;
-		memcpy(&standard_image, core_param.image_queue_write_buffer, sizeof(void *));
-#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
-		free(standard_image);
-#else
-		clReleaseMemObject(standard_image);
-#endif	
-	}
-	printf("clear image queue over!\n");
-}
-
-void clear_object_queue()
-{
-	const int request_size = roundup_power_of_2(sizeof(list));
+	const int request_size = roundup_power_of_2(sizeof(list *));
 	while (fifo_len(core_param.object_queue)) {
 		while (fifo_get(core_param.object_queue, core_param.object_queue_write_buffer, request_size) != request_size);
 		printf("clear object queue...\n");
-		list *object_list = make_list();
-		memcpy(object_list, core_param.object_queue_write_buffer, sizeof(list));
+		list *object_list = NULL;
+		memcpy(&object_list, core_param.object_queue_write_buffer, sizeof(list *));
 		free_detections(object_list);
 	}
 	printf("clear object queue over!\n");
@@ -571,8 +638,7 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 		}
 	}
 
-	cl_event event;
-	clEnqueueUnmapMemObject(wrapper.command_queue, image, h_image, 0, NULL, &event);
+	clEnqueueUnmapMemObject(wrapper.command_queue, image, h_image, 0, NULL, NULL);
 	
 	bitmap *bmp = create_bmp((const char *)rgb24, width, height, 24);
 	save_bmp(bmp, "standard.bmp");

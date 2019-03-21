@@ -18,6 +18,8 @@ static void maxpool_thread(struct maxpool_thread_param *param, size_t batch_size
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
+extern char BINARY_FILENAME_TO_START(cl_common, h);
+extern char BINARY_FILENAME_TO_END(cl_common, h);
 extern char BINARY_FILENAME_TO_START(maxpool, cl);
 extern char BINARY_FILENAME_TO_END(maxpool, cl);
 
@@ -256,33 +258,28 @@ maxpool_gpu_context *create_maxpool_gpu_context(maxpool_layer *layer)
 	context->input_image_height = layer->input_size.h;
 	context->output_image_width = layer->output_size.w * context->channel_blocks;
 	context->output_image_height = layer->output_size.h;
-#ifndef USE_CL_PROGRAM_BINARY	
+
+	size_t header_size = (size_t)(&BINARY_FILENAME_TO_END(cl_common, h) - &BINARY_FILENAME_TO_START(cl_common, h));
 	size_t size = (size_t)(&BINARY_FILENAME_TO_END(maxpool, cl) - &BINARY_FILENAME_TO_START(maxpool, cl));
-	context->program_buffer = calloc(size + 1, sizeof(char));
+	context->program_buffer = calloc(header_size + size + 1, sizeof(char));
 	if (!context->program_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(maxpool, cl), size);
-	context->program_buffer[size] = '\0';
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(cl_common, h), header_size);
+	memcpy(context->program_buffer + header_size, &BINARY_FILENAME_TO_START(maxpool, cl), size);
+	context->program_buffer[header_size + size] = '\0';
 	
 	cl_int errcode;
-	char options[] = "";
-	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	char options[256] = "-I.";
+	PARSE_PRECISION;
+	context->program = cl_make_wrapper_program(wrapper, "maxpool.cl", context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-#else
-	cl_int errcode;
-	char options[] = "";
-	context->program = cl_make_wrapper_program(wrapper, "maxpool.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-#endif	
+	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "maxpool_2x2", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -292,7 +289,7 @@ maxpool_gpu_context *create_maxpool_gpu_context(maxpool_layer *layer)
 	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 	
 	cl_image_desc image_desc;

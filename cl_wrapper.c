@@ -19,6 +19,7 @@ static cl_program cl_create_program_with_source(cl_device_id device, cl_context 
 	const char *options, cl_int *errcode);
 static cl_program cl_create_program_from_binary(cl_device_id device, cl_context context, const char *filename,
 	const char *options, cl_int *errcode);
+static cl_program cl_make_wrapper_program_from_buffer(cl_wrapper wrapper, char *buffer, const char *options, cl_int *errcode);
 static cl_int cl_save_binary_program(cl_device_id device, cl_program program, const char *filename);
 #ifdef __linux__
 static cl_ion_context cl_make_ion_buffer_internal(cl_wrapper wrapper, size_t size, unsigned int ion_allocation_flags,
@@ -76,7 +77,7 @@ cl_command_queue cl_get_wrapper_command_queue(cl_wrapper wrapper)
 	return wrapper.command_queue;
 }
 
-cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, const char *options, cl_int *errcode)
+cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, char *buffer, const char *options, cl_int *errcode)
 {
 	char binary_filename[1024];
 	strcpy(binary_filename, filename);
@@ -84,26 +85,9 @@ cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, con
 
 	cl_program program = cl_create_program_from_binary(wrapper.device, wrapper.context, binary_filename, options, errcode);
 	if (!program) {
-		program = cl_create_program_with_source(wrapper.device, wrapper.context, filename, options, errcode);
+		program = cl_make_wrapper_program_from_buffer(wrapper, buffer, options, errcode);
 		if (!program) return program;
 		*errcode = cl_save_binary_program(wrapper.device, program, binary_filename);
-	}
-	
-	return program;
-}
-
-cl_program cl_make_wrapper_program_from_buffer(cl_wrapper wrapper, char *buffer, const char *options, cl_int *errcode)
-{
-	cl_program program = clCreateProgramWithSource(wrapper.context, 1, (const char **)&buffer, NULL, errcode);
-	
-	if (!program || CL_SUCCESS != *errcode) return program;
-	
-	*errcode = clBuildProgram(program, 1, &wrapper.device, options, NULL, NULL);
-	if (CL_SUCCESS != *errcode) {
-		char buildinfo[16384];
-		clGetProgramBuildInfo(program, wrapper.device, CL_PROGRAM_BUILD_LOG, sizeof(buildinfo), buildinfo, NULL);
-		fprintf(stderr, "clGetProgramBuildInfo:\n%s\n", buildinfo);
-		clReleaseProgram(program);
 	}
 	
 	return program;
@@ -306,6 +290,23 @@ cl_program cl_create_program_from_binary(cl_device_id device, cl_context context
 	if (CL_SUCCESS != *errcode) {
 		char buildinfo[16384];
 		clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buildinfo), buildinfo, NULL);
+		fprintf(stderr, "clGetProgramBuildInfo:\n%s\n", buildinfo);
+		clReleaseProgram(program);
+	}
+	
+	return program;
+}
+
+cl_program cl_make_wrapper_program_from_buffer(cl_wrapper wrapper, char *buffer, const char *options, cl_int *errcode)
+{
+	cl_program program = clCreateProgramWithSource(wrapper.context, 1, (const char **)&buffer, NULL, errcode);
+	
+	if (!program || CL_SUCCESS != *errcode) return program;
+	
+	*errcode = clBuildProgram(program, 1, &wrapper.device, options, NULL, NULL);
+	if (CL_SUCCESS != *errcode) {
+		char buildinfo[16384];
+		clGetProgramBuildInfo(program, wrapper.device, CL_PROGRAM_BUILD_LOG, sizeof(buildinfo), buildinfo, NULL);
 		fprintf(stderr, "clGetProgramBuildInfo:\n%s\n", buildinfo);
 		clReleaseProgram(program);
 	}

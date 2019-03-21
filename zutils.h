@@ -6,6 +6,10 @@ extern "C"
 {
 #endif
 
+#ifdef OPENCL
+#	include "CL/opencl.h"
+#endif
+
 #ifdef __linux__
 #define BINARY_FILENAME_TO_START(name, suffix) \
 	_binary_##name##_##suffix##_start
@@ -24,14 +28,28 @@ extern "C"
 #	error "unsupported operation system!"
 #endif
 
+#ifdef OPENCL
+#ifdef FLOAT
+#	define PARSE_PRECISION strcat(options, " -DFLOAT -DDATA_TYPE=float -DREAD_WRITE_DATA_TYPE=f")
+#	define IMAGE_CHANNEL_DATA_TYPE CL_FLOAT
+#	define MEM_MAP_PTR_TYPE cl_float
+#else
+#	define PARSE_PRECISION strcat(options, " -DDATA_TYPE=half -DREAD_WRITE_DATA_TYPE=h")
+#	define IMAGE_CHANNEL_DATA_TYPE CL_HALF_FLOAT
+#	define MEM_MAP_PTR_TYPE cl_half
+#endif
+#endif
+
 void mmfree(int n, ...);
 void mset(char *const X, size_t size, const char *const val, int nvals);
 void mcopy(const char *const X, char *const Y, size_t size);
 void save_volume(float *data, int width, int height, int nchannels, const char *path);
-void nchw_to_nhwc_quad(const float *const input, float *const output, int width, int height,
+#ifdef OPENCL
+void nchw_to_nhwc_quad(const float *const input, MEM_MAP_PTR_TYPE *const output, int width, int height,
 	int channels, int batch, int input_row_pitch, int output_row_pitch);
-void nhwc_to_nchw_quad(const float *const input, float *const output, int width, int height,
+void nhwc_to_nchw_quad(const MEM_MAP_PTR_TYPE *const input, float *const output, int width, int height,
 	int channels, int batch, int input_row_pitch, int output_row_pitch);
+#endif
 int round_up_division_2(int x);
 int round_up_division_4(int x);
 unsigned int roundup_power_of_2(unsigned int a);

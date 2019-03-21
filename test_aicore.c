@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+#include <string.h>
 #ifdef __linux__
 #	include <termios.h>
 #	include <sys/types.h>
@@ -57,7 +58,9 @@ int main(int argc, char *argv[])
 	
 	if (create_aicore_test_thread(&tid)) goto cleanup;
 
-	// const struct timespec req = {0, 1000000};
+	int ns = 1000000;	// 1ms
+	if (argc > 2) ns = atoi(argv[2]);
+	const struct timespec req = {0, ns};
 	while (!quit) {
 #ifdef __linux__
 		if (kbhit()) {
@@ -77,11 +80,12 @@ int main(int argc, char *argv[])
 			printf("ai_core_send_image fail! error code %d.\n", ret);
 		}
 	
-		// nanosleep(&req, NULL); // 如果ai_core_send_image很快返回,此处需要延时,让算法有足够时间消耗队列中的数据
+		nanosleep(&req, NULL); // 如果ai_core_send_image很快返回,此处需要延时,让算法有足够时间消耗队列中的数据
 	}
 	
 	cleanup:
 	wait_for_thread_dead(tid);	// 等待接收物体坐标的线程结束
+	save_bmp(bmp, "detections.bmp");
 	if (bmp) delete_bmp(bmp);
 	ai_core_free();
 	
@@ -116,10 +120,10 @@ void *aicore_test_thread(void *param)
 	struct timeval t1, t2;
 	float threshold = 0.4f;
 	const struct timespec req = {0, 1000};
+	object_t object;
 	gettimeofday(&t1, NULL);
 	
 	while (!quit) {
-		object_t object;
 		size_t num = ai_core_fetch_object(&object, 1, threshold);
 		if (num <= 0) {
 			nanosleep(&req, NULL);
@@ -132,6 +136,8 @@ void *aicore_test_thread(void *param)
 		printf("detected object[%d,%d,%d,%d], frame rate %ffps.\n", object.x, object.y, object.w, object.h, counter / duration);
 	}
 	
+	draw_bounding_box(bmp, object.x, object.y, object.w, object.h);
+	
 	return (void *)(0);
 }
 
@@ -140,22 +146,22 @@ void draw_bounding_box(bitmap *bmp, int x, int y, int w, int h)
 	const int pitch = get_bmp_pitch(bmp);
 	const int bit_count = get_bmp_bit_count(bmp);
 	unsigned char *data = get_bmp_data(bmp);
-	const int nchannels = bit_count >> 3;
+	const int bpp = bit_count >> 3;
 	const int color[3] = {0, 255, 255};
 	const int left = x;
 	const int right = x + w - 1;
 	const int top = y;
 	const int bottom = y + h - 1;
 	
-	for (int c = 0; c < nchannels; ++c) {
+	for (int c = 0; c < bpp; ++c) {
 		for (int y = top; y < bottom; ++y) {
-			data[y * pitch + left * nchannels + c] = color[c];
-			data[y * pitch + right * nchannels + c] = color[c];
+			data[y * pitch + left * bpp + c] = color[c];
+			data[y * pitch + right * bpp + c] = color[c];
 		}
 		
 		for (int x = left; x < right; ++x) {
-			data[top * pitch + x * nchannels + c] = color[c];
-			data[bottom * pitch + x * nchannels + c] = color[c];
+			data[top * pitch + x * bpp + c] = color[c];
+			data[bottom * pitch + x * bpp + c] = color[c];
 		}
 	}
 }

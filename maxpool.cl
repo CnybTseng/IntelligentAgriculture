@@ -12,9 +12,12 @@ void maxpool_2x2(__read_only image2d_t input, __write_only image2d_t output,
 	const int lx = mad24(gx - mul24(channel_block_id, output_width), stride, offset);
 	const int ly = mad24(gy, stride, offset);
 
-	float4 pixels[4];
-	float4 maximum = -FLT_MAX;
-	
+	DATA_TYPE4 pixels[4];
+#ifdef FLOAT
+	DATA_TYPE4 maximum = -FLT_MAX;
+#else
+	DATA_TYPE4 maximum = -HALF_MAX;
+#endif	
 	const int x = mad24(channel_block_id, input_width, lx);
 	const int y = ly;
 	const int4 flag1 = lx < 0 || lx > input_width - 1;
@@ -22,17 +25,17 @@ void maxpool_2x2(__read_only image2d_t input, __write_only image2d_t output,
 	const int4 flag3 = lx + 1 < 0 || lx + 1 >input_width - 1;
 	const int4 flag4 = ly + 1 < 0 || ly + 1 > input_height - 1;
 	
-	pixels[0] = select(read_imagef(input, (int2)(x, y)), -FLT_MAX, flag1 || flag2);
-	pixels[1] = select(read_imagef(input, (int2)(x + 1, y)), -FLT_MAX, flag3 || flag2);
-	pixels[2] = select(read_imagef(input, (int2)(x, y + 1)), -FLT_MAX, flag1 || flag4);
-	pixels[3] = select(read_imagef(input, (int2)(x + 1, y + 1)), -FLT_MAX, flag3 || flag4);
+	pixels[0] = select(READ_IMAGE(input, (int2)(x, y)), -FLT_MAX, flag1 || flag2);
+	pixels[1] = select(READ_IMAGE(input, (int2)(x + 1, y)), -FLT_MAX, flag3 || flag2);
+	pixels[2] = select(READ_IMAGE(input, (int2)(x, y + 1)), -FLT_MAX, flag1 || flag4);
+	pixels[3] = select(READ_IMAGE(input, (int2)(x + 1, y + 1)), -FLT_MAX, flag3 || flag4);
 	
 	maximum = max(maximum, pixels[0]);
 	maximum = max(maximum, pixels[1]);
 	maximum = max(maximum, pixels[2]);
 	maximum = max(maximum, pixels[3]);
 	
-	write_imagef(output, (int2)(gx, gy), maximum);
+	WRITE_IMAGE(output, (int2)(gx, gy), maximum);
 }
 
 

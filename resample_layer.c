@@ -4,6 +4,8 @@
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
+extern char BINARY_FILENAME_TO_START(cl_common, h);
+extern char BINARY_FILENAME_TO_END(cl_common, h);
 extern char BINARY_FILENAME_TO_START(resample, cl);
 extern char BINARY_FILENAME_TO_END(resample, cl);
 
@@ -198,33 +200,28 @@ resample_context *create_resample_context(resample_layer *layer)
 	context->input_image_height = layer->input_size.h;
 	context->output_image_width = context->channel_blocks * layer->output_size.w;
 	context->output_image_height = layer->output_size.h;
-#ifndef USE_CL_PROGRAM_BINARY	
+
+	size_t header_size = (size_t)(&BINARY_FILENAME_TO_END(cl_common, h) - &BINARY_FILENAME_TO_START(cl_common, h));
 	size_t size = (size_t)(&BINARY_FILENAME_TO_END(resample, cl) - &BINARY_FILENAME_TO_START(resample, cl));
-	context->program_buffer = calloc(size + 1, sizeof(char));
+	context->program_buffer = calloc(header_size + size + 1, sizeof(char));
 	if (!context->program_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(resample, cl), size);
-	context->program_buffer[size] = '\0';
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(cl_common, h), header_size);
+	memcpy(context->program_buffer + header_size, &BINARY_FILENAME_TO_START(resample, cl), size);
+	context->program_buffer[header_size + size] = '\0';
 	
 	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	char options[256] = "-cl-fast-relaxed-math -I.";
+	PARSE_PRECISION;
+	context->program = cl_make_wrapper_program(wrapper, "resample.cl", context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-#else
-	cl_int errcode;
-	char options[] = "-cl-fast-relaxed-math";
-	context->program = cl_make_wrapper_program(wrapper, "resample.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-#endif	
+	
 	if (layer->upsample) {
 		context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "upsampleB1", &errcode);
 	} else {
@@ -239,7 +236,7 @@ resample_context *create_resample_context(resample_layer *layer)
 	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 	
 	cl_image_desc image_desc;

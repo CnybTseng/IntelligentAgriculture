@@ -24,7 +24,7 @@ endif
 
 EXEOBJ=test_znet.o test_aicore.o
 CL_KERNEL_FILES=$(CLNAMES)
-BINOBJ=agriculture.o $(CLOBJS)
+BINOBJ=agriculture.o cl_common.o $(CLOBJS)
 ALLOBJS=$(COBJS) $(CPPOBJS) $(BINOBJ)
 OBJS=$(filter-out $(EXEOBJ) $(BINOBJ),$(ALLOBJS))
 
@@ -81,7 +81,7 @@ endif
 CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=120 -g  -fopenmp \
 -DMERGE_BATCHNORM_TO_CONV -DAICORE_BUILD_DLL -DUSE_CL_PROGRAM_BINARY
 ifeq ($(GPU),1)
-CFLAGS+= -DOPENCL -D_CL_PROFILING_ENABLE
+CFLAGS+= -DOPENCL -D_CL_PROFILING_ENABLE -D_FLOAT
 ifeq ($(CLBLAST),1)
 CFLAGS+= -DCLBLAST
 endif
@@ -89,12 +89,12 @@ ifeq ($(WINOGRAD),1)
 CFLAGS+= -DWINOGRAD_CONVOLUTION
 endif
 else ifeq ($(NNPACK),1)
-CFLAGS+= -DNNPACK
+CFLAGS+= -DNNPACK -D_NNPACK_PROFILING_ENABLE
 endif
 ifeq ($(ARCH),x86)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED
 else ifeq ($(ARCH),arm)
-CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
+CFLAGS+= -march=armv8-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
 endif
 
 LIB= -L.
@@ -130,16 +130,16 @@ endif
 .PHONY:$(EXEC) all
 all:info bin2obj $(SLIB) $(EXEC)
 
-test_znet$(EXE_SUFFIX):test_znet.o $(OBJS) agriculture.o $(CLOBJS)
+test_znet$(EXE_SUFFIX):test_znet.o $(OBJS) agriculture.o cl_common.o $(CLOBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 test_aicore$(EXE_SUFFIX):test_aicore.o bitmap.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
-$(ALIB): $(OBJS) agriculture.o $(CLOBJS)
+$(ALIB): $(OBJS) agriculture.o cl_common.o $(CLOBJS)
 	$(AR) $(ARFLAGS) $@ $^
 
-$(SLIB): $(OBJS) agriculture.o $(CLOBJS)
+$(SLIB): $(OBJS) agriculture.o cl_common.o $(CLOBJS)
 	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS)
 
 %.o:%.c
@@ -147,6 +147,7 @@ $(SLIB): $(OBJS) agriculture.o $(CLOBJS)
 
 bin2obj:
 	$(OBJCOPY) --input-target binary --output-target $(OT) --binary-architecture $(BA) agriculture.weights agriculture.o
+	$(OBJCOPY) --input-target binary --output-target $(OT) --binary-architecture $(BA) cl_common.h cl_common.o
 	@for target in $(CL_KERNEL_FILES);	\
 	do	\
 	$(OBJCOPY) --input-target binary --output-target $(OT) --binary-architecture $(BA) $$target.cl $$target.o;	\

@@ -1,10 +1,3 @@
-#pragma OPENCL EXTENSION cl_khr_fp16 : enable
-#pragma OPENCL EXTENSION cl_khr_gl_sharing : enable
-
-#define VECTOR_DATA_TYPE_STRING(data_type, size) data_type##size
-#define VECTOR_DATA_TYPE(data_type, size) VECTOR_DATA_TYPE_STRING(data_type, size)
-#define DATA_TYPE_Q VECTOR_DATA_TYPE(DATA_TYPE, 4)
-
 __kernel
 void weight_transform_f4x4_3x3(__read_only image2d_t weight, __write_only image2d_t transformed_weight)
 {
@@ -12,13 +5,13 @@ void weight_transform_f4x4_3x3(__read_only image2d_t weight, __write_only image2
 	int gy = get_global_id(1);
 	const int channel_groups = get_global_size(0);
 	
-	float4 g[9];
-	float4 Gg[18];
-	float4 GgGT[36];
+	DATA_TYPE4 g[9];
+	DATA_TYPE4 Gg[18];
+	DATA_TYPE4 GgGT[36];
 
 	#pragma unroll
 	for (int i = 0; i < 9; i++) {
-		g[i] = read_imagef(weight, (int2)(mul24(gx, 9) + i, gy));
+		g[i] = READ_IMAGE(weight, (int2)(mul24(gx, 9) + i, gy));
 	}
 	
 	#pragma unroll
@@ -43,7 +36,7 @@ void weight_transform_f4x4_3x3(__read_only image2d_t weight, __write_only image2
 	
 	#pragma unroll
 	for (int i = 0; i < 36; i++) {
-		write_imagef(transformed_weight, (int2)(gx + i * channel_groups, gy), GgGT[i]);
+		WRITE_IMAGE(transformed_weight, (int2)(gx + i * channel_groups, gy), GgGT[i]);
 	}
 }
 
@@ -62,50 +55,50 @@ void input_transform_f4x4_3x3(__read_only image2d_t input, __write_only image2d_
 	const int pixel_y = (tile_y << 2) - 1;
 	const int pos = channel_block_id * input_width + pixel_x;
 	
-	float4 d[36];
-	float4 BTd[36];
-	float4 BTdB[36];
+	DATA_TYPE4 d[36];
+	DATA_TYPE4 BTd[36];
+	DATA_TYPE4 BTdB[36];
 
 	int y = select(pixel_y, -1, pixel_y < 0 || pixel_y > input_height - 1);
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
 		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
-		d[i] = read_imagef(input, (int2)(x, y));
+		d[i] = READ_IMAGE(input, (int2)(x, y));
 	}
 	
 	y = select(pixel_y + 1, -1, pixel_y + 1 < 0 || pixel_y + 1 > input_height - 1);
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
 		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
-		d[6 + i] = read_imagef(input, (int2)(x, y));
+		d[6 + i] = READ_IMAGE(input, (int2)(x, y));
 	}
 	
 	y = select(pixel_y + 2, -1, pixel_y + 2 < 0 || pixel_y + 2 > input_height - 1);
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
 		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
-		d[12 + i] = read_imagef(input, (int2)(x, y));
+		d[12 + i] = READ_IMAGE(input, (int2)(x, y));
 	}
 	
 	y = select(pixel_y + 3, -1, pixel_y + 3 < 0 || pixel_y + 3 > input_height - 1);
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
 		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
-		d[18 + i] = read_imagef(input, (int2)(x, y));
+		d[18 + i] = READ_IMAGE(input, (int2)(x, y));
 	}
 	
 	y = select(pixel_y + 4, -1, pixel_y + 4 < 0 || pixel_y + 4 > input_height - 1);
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
 		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
-		d[24 + i] = read_imagef(input, (int2)(x, y));
+		d[24 + i] = READ_IMAGE(input, (int2)(x, y));
 	}
 	
 	y = select(pixel_y + 5, -1, pixel_y + 5 < 0 || pixel_y + 5 > input_height - 1);
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
 		int x = select(pos + i, -1, pixel_x + i < 0 || pixel_x + i > input_width - 1);
-		d[30 + i] = read_imagef(input, (int2)(x, y));
+		d[30 + i] = READ_IMAGE(input, (int2)(x, y));
 	}
 	
 	#pragma unroll
@@ -130,37 +123,37 @@ void input_transform_f4x4_3x3(__read_only image2d_t input, __write_only image2d_
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[i]);
+		WRITE_IMAGE(transformed_input, (int2)(tile_id, channel_block_id), BTdB[i]);
 		channel_block_id += channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[6 + i]);
+		WRITE_IMAGE(transformed_input, (int2)(tile_id, channel_block_id), BTdB[6 + i]);
 		channel_block_id += channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[12 + i]);
+		WRITE_IMAGE(transformed_input, (int2)(tile_id, channel_block_id), BTdB[12 + i]);
 		channel_block_id += channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[18 + i]);
+		WRITE_IMAGE(transformed_input, (int2)(tile_id, channel_block_id), BTdB[18 + i]);
 		channel_block_id += channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[24 + i]);
+		WRITE_IMAGE(transformed_input, (int2)(tile_id, channel_block_id), BTdB[24 + i]);
 		channel_block_id += channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		write_imagef(transformed_input, (int2)(tile_id, channel_block_id), BTdB[30 + i]);
+		WRITE_IMAGE(transformed_input, (int2)(tile_id, channel_block_id), BTdB[30 + i]);
 		channel_block_id += channel_blocks;
 	}
 }
@@ -178,34 +171,34 @@ void matrix_multiply(__read_only image2d_t transformed_weight, __read_only image
 	const int batch_pos = mul24(batch, input_channel_blocks);
 	const int output_channel_id = output_channel_block_id << 2;
 	
-	float4 a0, a1, a2, a3;
-	float4 b0, b1, b2, b3;
-	float4 c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+	DATA_TYPE4 a0, a1, a2, a3;
+	DATA_TYPE4 b0, b1, b2, b3;
+	DATA_TYPE4 c0 = 0, c1 = 0, c2 = 0, c3 = 0;
 	
 	for (int i = 0; i < input_channel_blocks; i++) {
-		a0 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id));
-		a1 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id + 1));
-		a2 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id + 2));
-		a3 = read_imagef(transformed_weight, (int2)(i + batch_pos, output_channel_id + 3));
+		a0 = READ_IMAGE(transformed_weight, (int2)(i + batch_pos, output_channel_id));
+		a1 = READ_IMAGE(transformed_weight, (int2)(i + batch_pos, output_channel_id + 1));
+		a2 = READ_IMAGE(transformed_weight, (int2)(i + batch_pos, output_channel_id + 2));
+		a3 = READ_IMAGE(transformed_weight, (int2)(i + batch_pos, output_channel_id + 3));
 		
-		b0 = read_imagef(transformed_input, (int2)(tile_id, batch_pos + i));
-		b1 = read_imagef(transformed_input, (int2)(tile_id + 1, batch_pos + i));
-		b2 = read_imagef(transformed_input, (int2)(tile_id + 2, batch_pos + i));
-		b3 = read_imagef(transformed_input, (int2)(tile_id + 3, batch_pos + i));
+		b0 = READ_IMAGE(transformed_input, (int2)(tile_id, batch_pos + i));
+		b1 = READ_IMAGE(transformed_input, (int2)(tile_id + 1, batch_pos + i));
+		b2 = READ_IMAGE(transformed_input, (int2)(tile_id + 2, batch_pos + i));
+		b3 = READ_IMAGE(transformed_input, (int2)(tile_id + 3, batch_pos + i));
 		
-		c0 += (float4)(dot(a0, b0), dot(a1, b0), dot(a2, b0), dot(a3, b0));
-		c1 += (float4)(dot(a0, b1), dot(a1, b1), dot(a2, b1), dot(a3, b1));
-		c2 += (float4)(dot(a0, b2), dot(a1, b2), dot(a2, b2), dot(a3, b2));
-		c3 += (float4)(dot(a0, b3), dot(a1, b3), dot(a2, b3), dot(a3, b3));
+		c0 += (DATA_TYPE4)(dot(a0, b0), dot(a1, b0), dot(a2, b0), dot(a3, b0));
+		c1 += (DATA_TYPE4)(dot(a0, b1), dot(a1, b1), dot(a2, b1), dot(a3, b1));
+		c2 += (DATA_TYPE4)(dot(a0, b2), dot(a1, b2), dot(a2, b2), dot(a3, b2));
+		c3 += (DATA_TYPE4)(dot(a0, b3), dot(a1, b3), dot(a2, b3), dot(a3, b3));
 	}
 
-	write_imagef(output, (int2)(tile_id, output_channel_block_global_id), c0);
+	WRITE_IMAGE(output, (int2)(tile_id, output_channel_block_global_id), c0);
 	if ((tile_id + 1) >= ntiles) return;
-	write_imagef(output, (int2)(tile_id + 1, output_channel_block_global_id), c1);
+	WRITE_IMAGE(output, (int2)(tile_id + 1, output_channel_block_global_id), c1);
 	if ((tile_id + 2) >= ntiles) return;
-	write_imagef(output, (int2)(tile_id + 2, output_channel_block_global_id), c2);
+	WRITE_IMAGE(output, (int2)(tile_id + 2, output_channel_block_global_id), c2);
 	if ((tile_id + 3) >= ntiles) return;
-	write_imagef(output, (int2)(tile_id + 3, output_channel_block_global_id), c3);
+	WRITE_IMAGE(output, (int2)(tile_id + 3, output_channel_block_global_id), c3);
 }
 
 __kernel
@@ -223,47 +216,47 @@ void inverse_output_transform_f4x4_3x3(__read_only image2d_t output, __read_only
 	const int output_channel_blocks = get_global_size(1);
 	const int pos = mad24(output_channel_block_id, output_width, pixel_x);
 	
-	float4 out[36];
-	float4 b;
-	float4 ATout[24];
-	float4 AToutA[16];
+	DATA_TYPE4 out[36];
+	DATA_TYPE4 b;
+	DATA_TYPE4 ATout[24];
+	DATA_TYPE4 AToutA[16];
 	
 	int output_channel_block_global_id = output_channel_block_id;
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		out[i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		out[i] = READ_IMAGE(output, (int2)(tile_id, output_channel_block_global_id));
 		output_channel_block_global_id += output_channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		out[6 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		out[6 + i] = READ_IMAGE(output, (int2)(tile_id, output_channel_block_global_id));
 		output_channel_block_global_id += output_channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		out[12 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		out[12 + i] = READ_IMAGE(output, (int2)(tile_id, output_channel_block_global_id));
 		output_channel_block_global_id += output_channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		out[18 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		out[18 + i] = READ_IMAGE(output, (int2)(tile_id, output_channel_block_global_id));
 		output_channel_block_global_id += output_channel_blocks;
 	}
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		out[24 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		out[24 + i] = READ_IMAGE(output, (int2)(tile_id, output_channel_block_global_id));
 		output_channel_block_global_id += output_channel_blocks;
 	}
 	
-	b = read_imagef(biases, output_channel_block_id);
+	b = READ_IMAGE(biases, output_channel_block_id);
 	
 	#pragma unroll
 	for (int i = 0; i < 6; i++) {
-		out[30 + i] = read_imagef(output, (int2)(tile_id, output_channel_block_global_id));
+		out[30 + i] = READ_IMAGE(output, (int2)(tile_id, output_channel_block_global_id));
 		output_channel_block_global_id += output_channel_blocks;
 	}
 	
@@ -286,7 +279,7 @@ void inverse_output_transform_f4x4_3x3(__read_only image2d_t output, __read_only
 	#pragma unroll
 	for (int i = 0; i < 16; i++) {
 		AToutA[i] += b;
-		AToutA[i] = select(0.1f * AToutA[i], AToutA[i], AToutA[i] > (float4)(0));
+		AToutA[i] = select(0.1f * AToutA[i], AToutA[i], AToutA[i] > (DATA_TYPE4)(0));
 	}
 
 	const int still_left_x = min(4, output_width - pixel_x);
@@ -296,28 +289,28 @@ void inverse_output_transform_f4x4_3x3(__read_only image2d_t output, __read_only
 	
 	#pragma unroll
 	for (int i = 0; i < still_left_x; i++) {
-		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y), AToutA[i]);
+		WRITE_IMAGE(inverse_transformed_output, (int2)(pos + i, pixel_y), AToutA[i]);
 	}
 	
 	if (still_left_y < 2) return;
 
 	#pragma unroll
 	for (int i = 0; i < still_left_x; i++) {
-		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y + 1), AToutA[4 + i]);
+		WRITE_IMAGE(inverse_transformed_output, (int2)(pos + i, pixel_y + 1), AToutA[4 + i]);
 	}
 	
 	if (still_left_y < 3) return;
 
 	#pragma unroll
 	for (int i = 0; i < still_left_x; i++) {
-		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y + 2), AToutA[8 + i]);
+		WRITE_IMAGE(inverse_transformed_output, (int2)(pos + i, pixel_y + 2), AToutA[8 + i]);
 	}
 	
 	if (still_left_y < 4) return;
 
 	#pragma unroll
 	for (int i = 0; i < still_left_x; i++) {
-		write_imagef(inverse_transformed_output, (int2)(pos + i, pixel_y + 3), AToutA[12 + i]);
+		WRITE_IMAGE(inverse_transformed_output, (int2)(pos + i, pixel_y + 3), AToutA[12 + i]);
 	}
 }
 
@@ -330,11 +323,11 @@ void direct_convolution_2d_1x1(__read_only image2d_t weight, __read_only image2d
 	int output_pixel_block_id = get_global_id(1);
 	int pixel_y = get_global_id(2);
 
-	float4 w[4];
-	float4 x[4];
-	float4 y[4];
+	DATA_TYPE4 w[4];
+	DATA_TYPE4 x[4];
+	DATA_TYPE4 y[4];
 	
-	y[0] = read_imagef(biases, output_channel_block_id);
+	y[0] = READ_IMAGE(biases, output_channel_block_id);
 	y[1] = y[0];
 	y[2] = y[0];
 	y[3] = y[0];
@@ -353,20 +346,20 @@ void direct_convolution_2d_1x1(__read_only image2d_t weight, __read_only image2d
 	int input_row_start = 0;
 	int weight_row_start = 0;
 	for (int i = 0; i < input_channel_blocks; i++) {		
-		w[0] = read_imagef(weight, (int2)(weight_row_start, output_channel_block_id));
-		w[1] = read_imagef(weight, (int2)(weight_row_start + 1, output_channel_block_id));
-		w[2] = read_imagef(weight, (int2)(weight_row_start + 2, output_channel_block_id));
-		w[3] = read_imagef(weight, (int2)(weight_row_start + 3, output_channel_block_id));
+		w[0] = READ_IMAGE(weight, (int2)(weight_row_start, output_channel_block_id));
+		w[1] = READ_IMAGE(weight, (int2)(weight_row_start + 1, output_channel_block_id));
+		w[2] = READ_IMAGE(weight, (int2)(weight_row_start + 2, output_channel_block_id));
+		w[3] = READ_IMAGE(weight, (int2)(weight_row_start + 3, output_channel_block_id));
 		
-		x[0] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.x, pixel_y));
-		x[1] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.y, pixel_y));
-		x[2] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.z, pixel_y));
-		x[3] = read_imagef(input, (int2)(input_row_start + input_pixel_block_x.w, pixel_y));
+		x[0] = READ_IMAGE(input, (int2)(input_row_start + input_pixel_block_x.x, pixel_y));
+		x[1] = READ_IMAGE(input, (int2)(input_row_start + input_pixel_block_x.y, pixel_y));
+		x[2] = READ_IMAGE(input, (int2)(input_row_start + input_pixel_block_x.z, pixel_y));
+		x[3] = READ_IMAGE(input, (int2)(input_row_start + input_pixel_block_x.w, pixel_y));
 #if 0		
-		y[0] += (float4)(dot(w[0], x[0]), dot(w[1], x[0]), dot(w[2], x[0]), dot(w[3], x[0]));
-		y[1] += (float4)(dot(w[0], x[1]), dot(w[1], x[1]), dot(w[2], x[1]), dot(w[3], x[1]));
-		y[2] += (float4)(dot(w[0], x[2]), dot(w[1], x[2]), dot(w[2], x[2]), dot(w[3], x[2]));
-		y[3] += (float4)(dot(w[0], x[3]), dot(w[1], x[3]), dot(w[2], x[3]), dot(w[3], x[3]));
+		y[0] += (DATA_TYPE4)(dot(w[0], x[0]), dot(w[1], x[0]), dot(w[2], x[0]), dot(w[3], x[0]));
+		y[1] += (DATA_TYPE4)(dot(w[0], x[1]), dot(w[1], x[1]), dot(w[2], x[1]), dot(w[3], x[1]));
+		y[2] += (DATA_TYPE4)(dot(w[0], x[2]), dot(w[1], x[2]), dot(w[2], x[2]), dot(w[3], x[2]));
+		y[3] += (DATA_TYPE4)(dot(w[0], x[3]), dot(w[1], x[3]), dot(w[2], x[3]), dot(w[3], x[3]));
 #else
 		y[0] = mad(x[0].x, w[0], y[0]);
 		y[0] = mad(x[0].y, w[1], y[0]);
@@ -396,23 +389,23 @@ void direct_convolution_2d_1x1(__read_only image2d_t weight, __read_only image2d
 	
 	int output_pixel_x = output_pixel_block_id << 2;
 	if (output_pixel_x >= width) return;
-	if (leaky_or_linear) y[0] = select(0.1f * y[0], y[0], y[0] > (float4)(0));
-	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[0]);
+	if (leaky_or_linear) y[0] = select(0.1f * y[0], y[0], y[0] > (DATA_TYPE4)(0));
+	WRITE_IMAGE(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[0]);
 	
 	output_pixel_x++;
 	if (output_pixel_x >= width) return;
-	if (leaky_or_linear) y[1] = select(0.1f * y[1], y[1], y[1] > (float4)(0));
-	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[1]);
+	if (leaky_or_linear) y[1] = select(0.1f * y[1], y[1], y[1] > (DATA_TYPE4)(0));
+	WRITE_IMAGE(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[1]);
 	
 	output_pixel_x++;
 	if (output_pixel_x >= width) return;
-	if (leaky_or_linear) y[2] = select(0.1f * y[2], y[2], y[2] > (float4)(0));
-	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[2]);
+	if (leaky_or_linear) y[2] = select(0.1f * y[2], y[2], y[2] > (DATA_TYPE4)(0));
+	WRITE_IMAGE(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[2]);
 	
 	output_pixel_x++;
 	if (output_pixel_x >= width) return;
-	if (leaky_or_linear) y[3] = select(0.1f * y[3], y[3], y[3] > (float4)(0));
-	write_imagef(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[3]);
+	if (leaky_or_linear) y[3] = select(0.1f * y[3], y[3], y[3] > (DATA_TYPE4)(0));
+	WRITE_IMAGE(output, (int2)(output_row_start + output_pixel_x, pixel_y), y[3]);
 }
 
 

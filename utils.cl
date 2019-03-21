@@ -11,11 +11,11 @@ void normalize_image(__read_only image2d_t image, __write_only image2d_t normali
 		(scale * (resized_y + 0.5f) - 0.5f) / (float)get_image_height(image));
 #endif
 	const sampler_t sampler = CLK_NORMALIZED_COORDS_TRUE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_LINEAR;
-	float4 pixel = read_imagef(image, sampler, xy);
+	DATA_TYPE4 pixel = READ_IMAGES(image, sampler, xy);
 
 	const int dx = (get_image_width(normalized_image) - resized_width) >> 1;
 	const int dy = (get_image_height(normalized_image) - resized_height) >> 1;
-	write_imagef(normalized_image, (int2)(dx + resized_x, dy + resized_y), pixel);
+	WRITE_IMAGE(normalized_image, (int2)(dx + resized_x, dy + resized_y), pixel);
 }
 
 

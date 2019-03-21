@@ -1,6 +1,3 @@
-/** @name Single precision floating General Matrix Multiply. Not transpose matrix A and B.
- ** @ { */
-
 __kernel void
 sgemm_nn_common(__private const int m, __private const int n, __private const int k,
 	__private const float alpha, __global float *A, __private const int lda, __global float *B,
@@ -202,10 +199,6 @@ sgemm_nn_sm(__private const int m, __private const int n, __private const int k,
 	C[gy * ldc + gx] = acc + c;
 }
 
-/** @ }*/
-/** @name Single precision floating general matrix multiply. Transpose matrix B.
- ** @ { */
-
 __kernel void
 sgemm_nt_common(__private const int m, __private const int n, __private const int k,
 	__private const float alpha, __global float *A, __private const int lda, __global float *B,
@@ -303,7 +296,5 @@ sgemm_nt_8x4(__private const int m, __private const int n, __private const int k
 		vstore4(c[j], 0, C + (gy + j) * ldc + gx);
 	}
 }
-
-/** @ }*/
 
 

@@ -15,6 +15,7 @@
 #include "zutils.h"
 #include "im2col.h"
 #include "gemm.h"
+#include "half.h"
 
 #ifdef MERGE_BATCHNORM_TO_CONV
 static void merge_batchnorm_params(convolutional_layer *layer);
@@ -30,6 +31,8 @@ static void forward_convolutional_layer_gpu(void *_layer, znet *net);
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
+extern char BINARY_FILENAME_TO_START(cl_common, h);
+extern char BINARY_FILENAME_TO_END(cl_common, h);
 extern char BINARY_FILENAME_TO_START(convolution, cl);
 extern char BINARY_FILENAME_TO_END(convolution, cl);
 
@@ -541,7 +544,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 	for (int i = 0; i < 2048; ++i) zeros[i] = 0;
 
 	if (3 != layer->filter_size) {
-#ifdef NNPACK_PROFILE_ENABLE
+#ifdef NNPACK_PROFILING_ENABLE
 		static double total = 0;
 		struct timeval t1, t2; 
 		gettimeofday(&t1, NULL);
@@ -566,7 +569,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			znet_threadpool(net),
 			NULL
 		);
-#ifdef NNPACK_PROFILE_ENABLE
+#ifdef NNPACK_PROFILING_ENABLE
 		gettimeofday(&t2, NULL);
 		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 		total += duration;
@@ -618,7 +621,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 				NULL
 			);
 		}
-#ifdef NNPACK_PROFILE_ENABLE		
+#ifdef NNPACK_PROFILING_ENABLE		
 		static double total = 0;
 		struct timeval t1, t2; 
 		gettimeofday(&t1, NULL);
@@ -643,7 +646,7 @@ void forward_convolutional_layer_nnp(void *_layer, znet *net)
 			znet_threadpool(net),
 			NULL
 		);
-#ifdef NNPACK_PROFILE_ENABLE
+#ifdef NNPACK_PROFILING_ENABLE
 		gettimeofday(&t2, NULL);
 		double duration = ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0;
 		total += duration;
@@ -691,18 +694,17 @@ void get_direct_convolution_output_image_size(convolutional_layer *layer, int *w
 
 void load_direct_convolution_weight(direct_convolution_context *context, float *weights, float *biases)
 {	
-	cl_event event;
 	cl_int errcode;
 	size_t origin[] = {0, 0, 0};
 	size_t region[] = {context->weight_image_width, context->weight_image_height, 1};
 	size_t image_row_pitch, image_slice_pitch;
-	float *h_weights = clEnqueueMapImage(wrapper.command_queue, context->d_weights, CL_TRUE, CL_MAP_WRITE,
+	MEM_MAP_PTR_TYPE *h_weights = clEnqueueMapImage(wrapper.command_queue, context->d_weights, CL_TRUE, CL_MAP_WRITE,
 		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	image_row_pitch = image_row_pitch >> 2;
+	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
 	const int buffer_row_pitch = context->input_channel_blocks << 2;
 	for (int y = 0; y < context->weight_image_height; ++y) {
 		for (int x = 0; x < context->input_channel_blocks; ++x) {
-			float *ptr = h_weights + y * image_row_pitch + (x << 4);
+			MEM_MAP_PTR_TYPE *ptr = h_weights + y * image_row_pitch + (x << 4);
 			for (int z = 0; z < 4; ++z) {
 #if 0
 				ptr[(z << 2) + 0] = weights[((y << 2) + z) * buffer_row_pitch + (x << 2) + 0];
@@ -710,22 +712,22 @@ void load_direct_convolution_weight(direct_convolution_context *context, float *
 				ptr[(z << 2) + 2] = weights[((y << 2) + z) * buffer_row_pitch + (x << 2) + 2];
 				ptr[(z << 2) + 3] = weights[((y << 2) + z) * buffer_row_pitch + (x << 2) + 3];
 #else
-				ptr[(z << 2) + 0] = weights[((y << 2) + 0) * buffer_row_pitch + (x << 2) + z];
-				ptr[(z << 2) + 1] = weights[((y << 2) + 1) * buffer_row_pitch + (x << 2) + z];
-				ptr[(z << 2) + 2] = weights[((y << 2) + 2) * buffer_row_pitch + (x << 2) + z];
-				ptr[(z << 2) + 3] = weights[((y << 2) + 3) * buffer_row_pitch + (x << 2) + z];
+				ptr[(z << 2) + 0] = HOST_TO_DEVICE(weights[((y << 2) + 0) * buffer_row_pitch + (x << 2) + z]);
+				ptr[(z << 2) + 1] = HOST_TO_DEVICE(weights[((y << 2) + 1) * buffer_row_pitch + (x << 2) + z]);
+				ptr[(z << 2) + 2] = HOST_TO_DEVICE(weights[((y << 2) + 2) * buffer_row_pitch + (x << 2) + z]);
+				ptr[(z << 2) + 3] = HOST_TO_DEVICE(weights[((y << 2) + 3) * buffer_row_pitch + (x << 2) + z]);
 #endif
 			}
 		}
 	}
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_weights, h_weights, 0, NULL, &event);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_weights, h_weights, 0, NULL, NULL);
 	
 	region[0] = context->bias_image_width;
 	region[1] = 1;
-	float *h_biases = clEnqueueMapImage(wrapper.command_queue, context->d_biases, CL_TRUE, CL_MAP_WRITE, origin,
+	MEM_MAP_PTR_TYPE *h_biases = clEnqueueMapImage(wrapper.command_queue, context->d_biases, CL_TRUE, CL_MAP_WRITE, origin,
 		region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	memcpy(h_biases, biases, image_row_pitch);
-	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_biases, h_biases, 0, NULL, &event);
+	for (int i = 0; i < context->nfilters; ++i) h_biases[i] = HOST_TO_DEVICE(biases[i]);
+	clEnqueueUnmapMemObject(wrapper.command_queue, context->d_biases, h_biases, 0, NULL, NULL);
 }
 
 direct_convolution_context *create_direct_convolution_context(convolutional_layer *layer)
@@ -753,7 +755,7 @@ direct_convolution_context *create_direct_convolution_context(convolutional_laye
 	context->output_image_width = layer->output_size.w * context->output_channel_blocks;
 	context->output_image_height = layer->output_size.h;
 	
-	char options[256] = "-cl-fast-relaxed-math";
+	char options[256] = "-I. -cl-fast-relaxed-math";
 	switch (layer->activation) {
 	case RELU:
 		strcat(options, " -DRELU");
@@ -771,31 +773,27 @@ direct_convolution_context *create_direct_convolution_context(convolutional_laye
 		strcat(options, " -DLINEAR");
 		break;
 	}
-#ifndef USE_CL_PROGRAM_BINARY	
+	PARSE_PRECISION;
+
+	size_t header_size = (size_t)(&BINARY_FILENAME_TO_END(cl_common, h) - &BINARY_FILENAME_TO_START(cl_common, h));
 	size_t size = (size_t)(&BINARY_FILENAME_TO_END(convolution, cl) - &BINARY_FILENAME_TO_START(convolution, cl));
-	context->program_buffer = calloc(size + 1, sizeof(char));
+	context->program_buffer = calloc(header_size + size + 1, sizeof(char));
 	if (!context->program_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
 		goto cleanup;
 	}
 	
-	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(convolution, cl), size);
-	context->program_buffer[size] = '\0';
+	memcpy(context->program_buffer, &BINARY_FILENAME_TO_START(cl_common, h), header_size);
+	memcpy(context->program_buffer + header_size, &BINARY_FILENAME_TO_START(convolution, cl), size);
+	context->program_buffer[header_size + size] = '\0';
 
 	cl_int errcode;
-	context->program = cl_make_wrapper_program_from_buffer(wrapper, context->program_buffer, options, &errcode);
+	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", context->program_buffer, options, &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		goto cleanup;
 	}
-#else
-	cl_int errcode;
-	context->program = cl_make_wrapper_program(wrapper, "convolution.cl", options, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-#endif	
+	
 	context->kernel = cl_make_wrapper_kernel(wrapper, context->program, "direct_convolution_2d_1x1", &errcode);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
@@ -805,7 +803,7 @@ direct_convolution_context *create_direct_convolution_context(convolutional_laye
 	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 	
 	cl_image_desc image_desc;
