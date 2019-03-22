@@ -4,6 +4,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <math.h>
+#include <sys/stat.h>
 #include "znet.h"
 #include "im2col.h"
 #include "zutils.h"
@@ -85,11 +86,12 @@ void test_normalize_image_with_gpu(int argc, char *argv[]);
 void test_maxpool_layer_with_gpu(int argc, char *argv[]);
 void test_direct_convolution(int argc, char *argv[]);
 void test_resample_layer_with_gpu(int argc, char *argv[]);
-void test_nhwc_to_nchw_quad(int argc, char *argv[]);
+void test_nhwc_to_nchw(int argc, char *argv[]);
 void test_image_standardizer(int argc, char *argv[]);
 void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[]);
 void test_standardizer_io(int argc, char *argv[]);
 void test_half(int argc, char *argv[]);
+void test_read_half_value_from_float_image(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
@@ -1554,7 +1556,7 @@ void test_winograd_input_transformation(int argc, char *argv[])
 	MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE, input_image_origin,
 		input_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
 	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
-	nchw_to_nhwc_quad(input, h_input, input_width, input_height, input_channels, 1, input_width, image_row_pitch);
+	nchw_to_nhwc(input, h_input, input_width, input_height, input_channels, 1, input_width, image_row_pitch, 4);
 	// save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
 	cl_event event;
 	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
@@ -1687,7 +1689,7 @@ void test_winograd_convolution(int argc, char *argv[])
 		MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE, input_image_origin,
 			input_image_region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
 		image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
-		nchw_to_nhwc_quad(input, h_input, input_width, input_height, input_channels, 1, input_width, image_row_pitch);
+		nchw_to_nhwc(input, h_input, input_width, input_height, input_channels, 1, input_width, image_row_pitch, 4);
 		if (save_result) {
 			// save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
 		}
@@ -2020,7 +2022,7 @@ void test_maxpool_layer_with_gpu(int argc, char *argv[])
 	MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE,
 		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
 	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
-	nchw_to_nhwc_quad(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch);
+	nchw_to_nhwc(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch, 4);
 	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
 
 	dim3 output_size;
@@ -2137,7 +2139,7 @@ void test_direct_convolution(int argc, char *argv[])
 	MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE,
 		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
 	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
-	nchw_to_nhwc_quad(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch);
+	nchw_to_nhwc(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch, 4);
 	// if (save_result) save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
 	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
 		
@@ -2230,7 +2232,7 @@ void test_resample_layer_with_gpu(int argc, char *argv[])
 	MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE,
 		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
 	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
-	nchw_to_nhwc_quad(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch);
+	nchw_to_nhwc(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch, 4);
 	// if (save_result) save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
 	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
 	
@@ -2255,13 +2257,14 @@ void test_resample_layer_with_gpu(int argc, char *argv[])
 #endif
 }
 
-void test_nhwc_to_nchw_quad(int argc, char *argv[])
+void test_nhwc_to_nchw(int argc, char *argv[])
 {
+#if defined(OPENCL) && defined(FLOAT)
 	const int w = 13;
 	const int h = 13;
 	const int c = 18;
 	const int rounded_c = ((c + 3) >> 2) << 2;
-	float *input = calloc(w * h * rounded_c, sizeof(float));
+	MEM_MAP_PTR_TYPE *input = calloc(w * h * rounded_c, sizeof(MEM_MAP_PTR_TYPE));
 	float *output = calloc(w * h * c, sizeof(float));
 	
 	srand(time(NULL));
@@ -2270,11 +2273,12 @@ void test_nhwc_to_nchw_quad(int argc, char *argv[])
 	}
 	
 	save_volume(input, w * rounded_c, h, 1, "nhwc.txt");
-	// nhwc_to_nchw_quad(input, output, w, h, c, 1, w * rounded_c, w);
+	nhwc_to_nchw(input, output, w, h, c, 1, w * rounded_c, w, 4);
 	save_volume(output, w, h, c, "nchw.txt");
 	
 	free(input);
 	free(output);
+#endif
 }
 
 void test_image_standardizer(int argc, char *argv[])
@@ -2462,6 +2466,7 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[])
 	net = znet_create(layers, nlayers, "agriculture.weights");
 	if (!net) goto cleanup;
 
+	system("rm -f *.cl.bin");
 	znet_architecture(net);
 	
 	int N = 1;
@@ -2592,5 +2597,138 @@ void test_half(int argc, char *argv[])
 		printf("%.7f ", float_number_new[i]);
 	}
 	printf("\n");
+#endif	
+}
+
+void test_read_half_value_from_float_image(int argc, char *argv[])
+{
+#ifdef OPENCL
+	const int width = 16;
+	const int height = 16;
+	cl_float float_data[width * height];
+	cl_half half_data[width * height];
+	cl_mem d_image = 0;
+	cl_program program = 0;
+	cl_kernel kernel = 0;
+	cl_mem d_half_image = 0;
+	
+	struct stat statbuf;
+	stat("test.cl", &statbuf);
+	char program_buffer[statbuf.st_size + 1];
+	
+	cl_int errcode;
+	wrapper = cl_create_wrapper(&errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	srand(time(NULL));
+	for (int i = 0; i < width * height; ++i) {
+		float_data[i] = rand() / (double)RAND_MAX - 0.5;
+	}
+	
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; ++x) {
+			printf("%f ", float_data[y * width + x]);
+		}
+		printf("\n");
+	}
+	printf("\n");
+	
+	for (int i = 0; i < width * height; ++i) {
+		half_data[i] = to_half(float_data[i]);
+	}
+	
+	char *half_ptr = (char *)half_data;
+	const int half_row_pitch = width * sizeof(cl_half);
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_FLOAT
+	};
+
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = width >> 3;
+	image_desc.image_height = height;
+	
+	d_image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	size_t origin[] = {0, 0, 0};
+	size_t region[] = {width >> 3, height, 1};
+	size_t image_row_pitch, image_slice_pitch;
+	char *h_image = (char *)clEnqueueMapImage(wrapper.command_queue, d_image, CL_TRUE, CL_MAP_WRITE, origin, region,
+		&image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	for (int y = 0; y < height; ++y) {
+		memcpy(h_image + y * image_row_pitch, half_ptr + y * half_row_pitch, half_row_pitch);
+	}
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_image, h_image, 0, NULL, NULL);
+	
+	mem_flags = CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR;
+	image_format.image_channel_order = CL_RGBA;
+	image_format.image_channel_data_type = CL_HALF_FLOAT;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = width >> 2;
+	image_desc.image_height = height;
+	d_half_image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	FILE *fp = fopen("test.cl", "rb");
+	fread(program_buffer, sizeof(char), statbuf.st_size, fp);
+	fclose(fp);
+	program_buffer[statbuf.st_size] = '\0';
+	
+	char options[] = "";
+	program = cl_make_wrapper_program(wrapper, "test.cl", program_buffer, options, &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_program[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	kernel = cl_make_wrapper_kernel(wrapper, program, "test", &errcode);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "cl_make_wrapper_kernel[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		goto cleanup;
+	}
+	
+	errcode = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_image);
+	errcode = clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_half_image);
+	
+	cl_event event;
+	cl_uint work_dim = 2;
+	size_t global_work_size[] = {width >> 3, height};
+	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
+		NULL, 0, NULL, &event);
+	clFinish(wrapper.command_queue);
+	
+	region[1] = width >> 2;
+	cl_half *h_half_image = clEnqueueMapImage(wrapper.command_queue, d_half_image, CL_TRUE, CL_MAP_READ, origin, region,
+		&image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
+	image_row_pitch = image_row_pitch / sizeof(cl_half);
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; ++x) {
+			printf("%f ", to_float(h_half_image[y * image_row_pitch + x]));
+		}
+		printf("\n");
+	}
+	printf("\n");
+	clEnqueueUnmapMemObject(wrapper.command_queue, d_image, h_image, 0, NULL, NULL);
+	
+	cleanup:
+	clReleaseMemObject(d_image);
+	clReleaseMemObject(d_half_image);
+	clReleaseProgram(program);
+	clReleaseKernel(kernel);
+	cl_destroy_wrapper(wrapper);
 #endif	
 }

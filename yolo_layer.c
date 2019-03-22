@@ -128,8 +128,8 @@ void forward_yolo_layer(void *_layer, znet *net)
 	MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, layer->d_input, CL_TRUE, CL_MAP_WRITE,
 		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
 	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
-	nhwc_to_nchw_quad(h_input, layer->output, layer->output_size.w, layer->output_size.h,
-		layer->output_size.c, 1, image_row_pitch, layer->output_size.w);
+	nhwc_to_nchw(h_input, layer->output, layer->output_size.w, layer->output_size.h,
+		layer->output_size.c, 1, image_row_pitch, layer->output_size.w, 4);
 	clEnqueueUnmapMemObject(wrapper.command_queue, layer->d_input, h_input, 0, NULL, NULL);
 #endif
 	int volume_per_scale = layer->output_size.w * layer->output_size.h * (4 + 1 + layer->classes);

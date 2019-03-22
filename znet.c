@@ -45,7 +45,7 @@ struct znet {
 
 static int convnet_parse_input_size(znet *net);
 static int convnet_parse_layer(znet *net);
-static int convnet_parse_weights(znet *net);
+static int __attribute__((unused)) convnet_parse_weights(znet *net);
 static int convnet_parse_weights_from_buffer(znet *net);
 
 #ifdef OPENCL
@@ -356,8 +356,8 @@ int convnet_parse_weights_from_buffer(znet *net)
 {	
 	int major;
 	int minor;
-	int revision;
-	unsigned long long seen;
+	int __attribute__((unused)) revision;
+	unsigned long long __attribute__((unused)) seen;
 	
 	char *ptr = &BINARY_FILENAME_TO_START(agriculture, weights);
 	
@@ -375,8 +375,7 @@ int convnet_parse_weights_from_buffer(znet *net)
 		seen = *((int *)ptr);
 		ptr += sizeof(int);
 	}
-	
-	printf("version %d.%d.%d, seen %u.\n", major, minor, revision, (unsigned int)seen);
+
 	for (int i = 0; i < net->nlayers; ++i) {
 		LAYER_TYPE type = *(LAYER_TYPE *)(net->layers[i]);		
 		if (type == CONVOLUTIONAL) {

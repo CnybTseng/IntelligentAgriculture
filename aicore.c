@@ -81,7 +81,7 @@ static void back_to_memory_pool(memory_unit_t *mem);
 static void free_memory_pool();
 static void wait_for_thread_dead(pthread_t tid);
 static void clear_object_list();
-static void save_standard_image(void *image, int width, int height, const char *filename);
+static void __attribute__((unused)) save_standard_image(void *image, int width, int height, const char *filename);
 
 #ifdef OPENCL
 cl_wrapper wrapper;

@@ -15,7 +15,7 @@
 #endif
 #include "cl_wrapper.h"
 
-static cl_program cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename,
+static cl_program __attribute__((unused)) cl_create_program_with_source(cl_device_id device, cl_context context, const char *filename,
 	const char *options, cl_int *errcode);
 static cl_program cl_create_program_from_binary(cl_device_id device, cl_context context, const char *filename,
 	const char *options, cl_int *errcode);

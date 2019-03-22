@@ -45,10 +45,10 @@ void mset(char *const X, size_t size, const char *const val, int nvals);
 void mcopy(const char *const X, char *const Y, size_t size);
 void save_volume(float *data, int width, int height, int nchannels, const char *path);
 #ifdef OPENCL
-void nchw_to_nhwc_quad(const float *const input, MEM_MAP_PTR_TYPE *const output, int width, int height,
-	int channels, int batch, int input_row_pitch, int output_row_pitch);
-void nhwc_to_nchw_quad(const MEM_MAP_PTR_TYPE *const input, float *const output, int width, int height,
-	int channels, int batch, int input_row_pitch, int output_row_pitch);
+int nchw_to_nhwc(const float *const input, MEM_MAP_PTR_TYPE *const output, int width, int height,
+	int channels, int batch, int input_row_pitch, int output_row_pitch, int channel_block_size);
+int nhwc_to_nchw(const MEM_MAP_PTR_TYPE *const input, float *const output, int width, int height,
+	int channels, int batch, int input_row_pitch, int output_row_pitch, int channel_block_size);
 #endif
 int round_up_division_2(int x);
 int round_up_division_4(int x);
