@@ -22,6 +22,7 @@ extern "C"
 #endif
 
 #include <pthread.h>
+#include "zutils.h"
 
 /** @typedef Fifo
  ** @brief ring buffer
@@ -31,16 +32,16 @@ typedef struct tagFifo Fifo;
 
 /** @name Allocate and destroy
  ** @{ */
-Fifo *fifo_alloc(unsigned int size);
-Fifo *fifo_init(char *buffer, unsigned int size, pthread_mutex_t *mutex);
-void fifo_delete(Fifo *self);
+AICORE_LOCAL Fifo *fifo_alloc(unsigned int size);
+AICORE_LOCAL Fifo *fifo_init(char *buffer, unsigned int size, pthread_mutex_t *mutex);
+AICORE_LOCAL void fifo_delete(Fifo *self);
 /** @} */
 
 /** @name FIFO operation
  ** @{ */
-unsigned int fifo_len(const Fifo *self);
-unsigned int fifo_put(Fifo *self, const char *buffer, unsigned int size);
-unsigned int fifo_get(Fifo *self, char *buffer, unsigned int size);
+AICORE_LOCAL unsigned int fifo_len(const Fifo *self);
+AICORE_LOCAL unsigned int fifo_put(Fifo *self, const char *buffer, unsigned int size);
+AICORE_LOCAL unsigned int fifo_get(Fifo *self, char *buffer, unsigned int size);
 /** @} */
 
 #ifdef __cplusplus

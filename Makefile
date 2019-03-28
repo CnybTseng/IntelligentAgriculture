@@ -1,8 +1,10 @@
 ARCH?=arm
 GPU?=1
 WINOGRAD?=1
+HALF?=1
 NNPACK?=0
 CLBLAST=0
+DEBUG?=0
 
 RM=rm -f
 EXE_SUFFIX=
@@ -81,12 +83,18 @@ endif
 CFLAGS=$(INC) -Wall -fPIC -O3 -DCL_TARGET_OPENCL_VERSION=120 -g  -fopenmp \
 -DMERGE_BATCHNORM_TO_CONV -DAICORE_BUILD_DLL -DUSE_CL_PROGRAM_BINARY
 ifeq ($(GPU),1)
-CFLAGS+= -DOPENCL -D_CL_PROFILING_ENABLE -D_FLOAT
+CFLAGS+= -DOPENCL -D_CL_PROFILING_ENABLE
 ifeq ($(CLBLAST),1)
 CFLAGS+= -DCLBLAST
 endif
 ifeq ($(WINOGRAD),1)
 CFLAGS+= -DWINOGRAD_CONVOLUTION
+endif
+ifeq ($(HALF),0)
+CFLAGS+= -DUSE_FLOAT
+endif
+ifeq ($(ARCH),arm)
+CFLAGS+= -DION
 endif
 else ifeq ($(NNPACK),1)
 CFLAGS+= -DNNPACK -D_NNPACK_PROFILING_ENABLE
@@ -95,6 +103,9 @@ ifeq ($(ARCH),x86)
 CFLAGS+= -msse2 -mssse3 -D__INTEL_SSE__ -D_TIMESPEC_DEFINED
 else ifeq ($(ARCH),arm)
 CFLAGS+= -march=armv8-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
+endif
+ifeq ($(DEBUG),1)
+CFLAGS+= -DNDEBUG
 endif
 
 LIB= -L.
@@ -106,7 +117,7 @@ LIBS+= -lpthread
 else ifeq ($(ARCH),arm)
 LIB+= -L../thirdparty/opencl-2.0/lib/armeabi-v7a -L../thirdparty/NNPACK/lib \
 -L../thirdparty/clblast/lib -L../thirdparty/egl-1.5/lib
-LIBS+= -lm
+LIBS+= -lm -llog
 endif
 ifeq ($(GPU),1)
 LIBS+= -lOpenCL
@@ -121,26 +132,28 @@ LIBS+= -lpthreadpool -lnnpack -lcpuinfo -lclog -llog
 endif
 
 LDFLAGS=$(LIB) $(LIBS)
-ifeq ($(ARCH),x86)
-LDFLAGS+= -Wl,--out-implib,$(ALIB)
-else ifeq ($(ARCH),arm)
-LDFLAGS+= -march=armv7-a -Wl,--fix-cortex-a8
+ifeq ($(ARCH),arm)
+LDFLAGS+= -march=armv8-a -Wl,--fix-cortex-a8
 endif
 
-.PHONY:$(EXEC) all
+.PHONY:all
 all:info bin2obj $(SLIB) $(EXEC)
 
 test_znet$(EXE_SUFFIX):test_znet.o $(OBJS) agriculture.o cl_common.o $(CLOBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-test_aicore$(EXE_SUFFIX):test_aicore.o bitmap.o
+test_aicore$(EXE_SUFFIX):test_aicore.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -laicore
 	
 $(ALIB): $(OBJS) agriculture.o cl_common.o $(CLOBJS)
 	$(AR) $(ARFLAGS) $@ $^
 
 $(SLIB): $(OBJS) agriculture.o cl_common.o $(CLOBJS)
+ifeq ($(ARCH),arm)
 	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS)
+else
+	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) -Wl,--out-implib,$(ALIB)
+endif
 
 %.o:%.c
 	$(CC) $(CFLAGS) -c $^

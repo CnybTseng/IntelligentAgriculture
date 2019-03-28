@@ -7,7 +7,6 @@
 #	include <arm_neon.h>
 #endif
 #include "image.h"
-#include "zutils.h"
 #ifdef OPENCL
 #	include "cl_wrapper.h"
 #endif
@@ -760,130 +759,22 @@ image_standardizer *create_image_standardizer(int width, int height, int standar
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clEnqueueFillImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 	}
+#else
+	set_image(standardizer->output, 0.5);
 #endif
 	return standardizer;
 }
 
-image *standardize_image(image_standardizer *standardizer, bitmap *bmp)
+void *get_standardizer_output_ptr(image_standardizer *standardizer)
 {
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
-	cl_int errcode;
-	size_t origin[] = {0, 0, 0};
-	size_t region[] = {standardizer->width, standardizer->height, 1};
-	size_t row_pitch, slice_pitch;
-	unsigned char *h_input = clEnqueueMapImage(wrapper.command_queue, standardizer->d_input, CL_TRUE, CL_MAP_WRITE,
-		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
-
-	const unsigned char *data = get_bmp_data(bmp);
-	const int src_row_pitch = get_bmp_pitch(bmp);
-	for (int y = 0; y < standardizer->height; ++y) {
-		for (int x = 0; x < standardizer->width; ++x) {
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2)]     = data[y * src_row_pitch + x * 3 + 2];
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 1] = data[y * src_row_pitch + x * 3 + 1];
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 2] = data[y * src_row_pitch + x * 3 + 0];
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 3] = 0;
-		}
-	}
-	
-	clEnqueueUnmapMemObject(wrapper.command_queue, standardizer->d_input, h_input, 0, NULL, NULL);
-
-	cl_mem standard_image = standardizer->output->d_data;
-	errcode  = clSetKernelArg(standardizer->kernel, 0, sizeof(cl_mem), &standardizer->d_input);
-	errcode |= clSetKernelArg(standardizer->kernel, 1, sizeof(cl_mem), &standard_image);
-	errcode |= clSetKernelArg(standardizer->kernel, 2, sizeof(int), &standardizer->resized_width);
-	errcode |= clSetKernelArg(standardizer->kernel, 3, sizeof(int), &standardizer->resized_height);
-	errcode |= clSetKernelArg(standardizer->kernel, 4, sizeof(float), &standardizer->scale);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-	}
-
-	cl_event event;
-	cl_uint work_dim = 2;
-	size_t global_work_size[] = {standardizer->resized_width, standardizer->resized_height};
-	clEnqueueNDRangeKernel(wrapper.command_queue, standardizer->kernel, work_dim, NULL, global_work_size,
-		NULL, 0, NULL, &event);
-
-#ifdef CL_PROFILING_ENABLE	
-	cl_ulong start, end;
-	clFinish(wrapper.command_queue);
-	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
-	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	float duration = (end - start) * 1e-6f;
-	printf("GPU, normalize_image: %fms.\n", duration);
-#endif
-	clReleaseEvent(event);
+	return standardizer->output->d_data;
 #else
-	int pitch = get_bmp_pitch(bmp);
-	unsigned char *data = get_bmp_data(bmp);
-	split_channel(data, standardizer->chw_image, pitch, standardizer->width, standardizer->height);
-	resize_image(standardizer->chw_image, standardizer->resized_chw_image, standardizer->width,
-		standardizer->height, standardizer->resized_width, standardizer->resized_height, 3);
-	set_image(standardizer->output, 0.5);
-	embed_image(standardizer->resized_chw_image, standardizer->output, standardizer->resized_width,
-		standardizer->resized_height);
+	return standardizer->output->data;
 #endif	
-	return standardizer->output;
 }
 
-image *standardize_image_rgb24(image_standardizer *standardizer, const unsigned char *const rgb24,
-	unsigned int width, unsigned int height)
-{
-#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
-	cl_int errcode;
-	size_t origin[] = {0, 0, 0};
-	size_t region[] = {standardizer->width, standardizer->height, 1};
-	size_t row_pitch, slice_pitch;
-	unsigned char *h_input = clEnqueueMapImage(wrapper.command_queue, standardizer->d_input, CL_TRUE, CL_MAP_WRITE,
-		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
-
-	for (int y = 0; y < standardizer->height; ++y) {
-		for (int x = 0; x < standardizer->width; ++x) {
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2)]     = rgb24[y * width * 3 + x * 3 + 2];
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 1] = rgb24[y * width * 3 + x * 3 + 1];
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 2] = rgb24[y * width * 3 + x * 3 + 0];
-			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 3] = 0;
-		}
-	}
-	
-	clEnqueueUnmapMemObject(wrapper.command_queue, standardizer->d_input, h_input, 0, NULL, NULL);
-
-	cl_mem standard_image = standardizer->output->d_data;
-	errcode  = clSetKernelArg(standardizer->kernel, 0, sizeof(cl_mem), &standardizer->d_input);
-	errcode |= clSetKernelArg(standardizer->kernel, 1, sizeof(cl_mem), &standard_image);
-	errcode |= clSetKernelArg(standardizer->kernel, 2, sizeof(int), &standardizer->resized_width);
-	errcode |= clSetKernelArg(standardizer->kernel, 3, sizeof(int), &standardizer->resized_height);
-	errcode |= clSetKernelArg(standardizer->kernel, 4, sizeof(float), &standardizer->scale);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-	}
-
-	cl_event event;
-	cl_uint work_dim = 2;
-	size_t global_work_size[] = {standardizer->resized_width, standardizer->resized_height};
-	clEnqueueNDRangeKernel(wrapper.command_queue, standardizer->kernel, work_dim, NULL, global_work_size,
-		NULL, 0, NULL, &event);
-
-#ifdef CL_PROFILING_ENABLE	
-	cl_ulong start, end;
-	clFinish(wrapper.command_queue);
-	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
-	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	float duration = (end - start) * 1e-6f;
-	printf("GPU, normalize_image: %fms.\n", duration);
-#endif
-	clReleaseEvent(event);
-#else
-	split_channel((unsigned char *)rgb24, standardizer->chw_image, width * 3, standardizer->width, standardizer->height);
-	resize_image(standardizer->chw_image, standardizer->resized_chw_image, standardizer->width,
-		standardizer->height, standardizer->resized_width, standardizer->resized_height, 3);
-	set_image(standardizer->output, 0.5);
-	embed_image(standardizer->resized_chw_image, standardizer->output, standardizer->resized_width,
-		standardizer->resized_height);
-#endif	
-	return standardizer->output;	
-}
-
-void standardize_image_io(image_standardizer *standardizer, const unsigned char *const rgb24,
+void standardize_image(image_standardizer *standardizer, const unsigned char *const rgb24,
 	unsigned int width, unsigned int height, void *output)
 {
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
@@ -934,11 +825,42 @@ void standardize_image_io(image_standardizer *standardizer, const unsigned char 
 	split_channel((unsigned char *)rgb24, standardizer->chw_image, width * 3, standardizer->width, standardizer->height);
 	resize_image(standardizer->chw_image, standardizer->resized_chw_image, standardizer->width,
 		standardizer->height, standardizer->resized_width, standardizer->resized_height, 3);
-	set_image(standardizer->output, 0.5);
-	embed_image(standardizer->resized_chw_image, standardizer->output, standardizer->resized_width,
-		standardizer->resized_height);
-	memcpy(output, standardizer->output->data, standardizer->standard_width * standardizer->standard_height * 3 * sizeof(float));
+	image img = {standardizer->standard_width, standardizer->standard_height, 3, output};
+	embed_image(standardizer->resized_chw_image, &img, standardizer->resized_width, standardizer->resized_height);
 #endif		
+}
+
+void standardize_ion_image(image_standardizer *standardizer, void *input, unsigned int width, unsigned int height, void *output)
+{
+#if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	cl_int errcode;
+	cl_mem d_input = input;
+	cl_mem standard_image = output;
+	errcode  = clSetKernelArg(standardizer->kernel, 0, sizeof(cl_mem), &d_input);
+	errcode |= clSetKernelArg(standardizer->kernel, 1, sizeof(cl_mem), &standard_image);
+	errcode |= clSetKernelArg(standardizer->kernel, 2, sizeof(int), &standardizer->resized_width);
+	errcode |= clSetKernelArg(standardizer->kernel, 3, sizeof(int), &standardizer->resized_height);
+	errcode |= clSetKernelArg(standardizer->kernel, 4, sizeof(float), &standardizer->scale);
+	if (CL_SUCCESS != errcode) {
+		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+	}
+
+	cl_event event;
+	cl_uint work_dim = 2;
+	size_t global_work_size[] = {standardizer->resized_width, standardizer->resized_height};
+	clEnqueueNDRangeKernel(wrapper.command_queue, standardizer->kernel, work_dim, NULL, global_work_size,
+		NULL, 0, NULL, &event);
+
+#ifdef CL_PROFILING_ENABLE	
+	cl_ulong start, end;
+	clFinish(wrapper.command_queue);
+	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
+	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
+	float duration = (end - start) * 1e-6f;
+	printf("GPU, normalize_image: %fms.\n", duration);
+#endif
+	clReleaseEvent(event);
+#endif	
 }
 
 void free_image_standardizer(image_standardizer *standardizer)

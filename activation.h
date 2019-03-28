@@ -1,12 +1,13 @@
 #ifndef _ACTIVATION_H_
 #define _ACTIVATION_H_
 
-#include "znet.h"
-
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+#include "znet.h"
+#include "zutils.h"
 
 /** @brief 神经元激活函数.目前仅支持线性整流激活,泄漏线性整流激活,线性激活和逻辑斯蒂激活.
  ** @param X 神经元原始输出或激活输出.
@@ -17,7 +18,7 @@ extern "C"
  **        activation=LINEAR,线性激活.
  **        activation=LOGISTIC,逻辑斯蒂激活.
  **/
-void activate(float *X, int n, ACTIVATION activation);
+AICORE_LOCAL void activate(float *X, int n, ACTIVATION activation);
 
 #ifdef __cplusplus
 }

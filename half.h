@@ -8,8 +8,9 @@ extern "C"
 
 #ifdef OPENCL
 #include "CL/opencl.h"
+#include "zutils.h"
 
-#ifdef FLOAT
+#ifdef USE_FLOAT
 #	define HOST_TO_DEVICE(val) val
 #	define DEVICE_TO_HOST(val) val
 #else
@@ -17,8 +18,8 @@ extern "C"
 #	define DEVICE_TO_HOST(val) to_float(val)
 #endif
 
-cl_half to_half(float f);
-float to_float(cl_half h);
+AICORE_LOCAL cl_half to_half(float f);
+AICORE_LOCAL float to_float(cl_half h);
 
 #endif
 

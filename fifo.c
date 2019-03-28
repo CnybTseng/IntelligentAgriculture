@@ -40,7 +40,6 @@ struct tagFifo
 
 /** @name some private functions
  ** @{ */
-static unsigned int roundup_power_of_2(unsigned int a);
 static unsigned int __fifo_len(const Fifo *self);
 static unsigned int __fifo_put(Fifo *self, const char *buffer, unsigned int size);
 static unsigned int __fifo_get(Fifo *self, char *buffer, unsigned int size);
@@ -195,27 +194,6 @@ unsigned int fifo_get(Fifo *self, char *buffer, unsigned int size)
 	pthread_mutex_unlock(self->mutex);
 	
 	return ret;
-}
-
-/** @brief Round up to power of 2.
- ** @param a input number.
- ** @return a number rounded up to power of 2.
- **/
-unsigned int roundup_power_of_2(unsigned int a)
-{
-	unsigned int position;
-	int i;
-	
-	if (a == 0) {
-		return 0;
-	}
-
-	position = 0;
-	for (i = a; i != 0; i >>= 1) {
-		position++;
-	}
-
-	return (unsigned int)(1 << position);
 }
 
 /** @brief Get ring buffer filling bytes.

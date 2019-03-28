@@ -6,7 +6,9 @@ extern "C"
 {
 #endif
 
-void im2col_cpu(float *image, int width, int height, int channels, int fsize,
+#include "zutils.h"
+
+AICORE_LOCAL void im2col_cpu(float *image, int width, int height, int channels, int fsize,
                 int stride, int padding, float *matrix);
 
 #ifdef __cplusplus

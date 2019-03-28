@@ -3,7 +3,6 @@
 #include <string.h>
 #include "yolo_layer.h"
 #include "activation.h"
-#include "zutils.h"
 #include "list.h"
 
 #ifdef OPENCL

@@ -12,7 +12,6 @@
 #include "convolutional_layer.h"
 #include "batchnorm_layer.h"
 #include "activation.h"
-#include "zutils.h"
 #include "im2col.h"
 #include "gemm.h"
 #include "half.h"
@@ -56,10 +55,10 @@ struct direct_convolution_context {
 	int output_image_height;
 };
 
-void load_direct_convolution_weight(direct_convolution_context *context, float *weights, float *biases);
-direct_convolution_context *create_direct_convolution_context(convolutional_layer *layer);
-void forward_convolutional_layer_1x1(convolutional_layer *layer);
-void free_direct_convolution_context(direct_convolution_context *context);
+static void load_direct_convolution_weight(direct_convolution_context *context, float *weights, float *biases);
+static direct_convolution_context *create_direct_convolution_context(convolutional_layer *layer);
+static void forward_convolutional_layer_1x1(convolutional_layer *layer);
+static void free_direct_convolution_context(direct_convolution_context *context);
 #endif
 
 #ifdef __INTEL_SSE__

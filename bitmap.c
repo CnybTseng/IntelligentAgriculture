@@ -34,7 +34,7 @@ typedef struct {
 	unsigned char reserved;
 } bgra;
 
-struct __bitmap {
+struct bitmap {
 	bit_map_file_header file_header;
 	bit_map_info_header info_header;
 	bgra *palette;

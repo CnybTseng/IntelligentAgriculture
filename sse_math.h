@@ -2,12 +2,12 @@
 #ifndef _SSE_MATH_H_
 #define _SSE_MATH_H_
 
-#include <xmmintrin.h>
-
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+#include <xmmintrin.h>
 	
 typedef __m128 v4sf;
 

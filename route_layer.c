@@ -3,7 +3,6 @@
 #include "route_layer.h"
 #include "convolutional_layer.h"
 #include "resample_layer.h"
-#include "zutils.h"
 
 static int parse_input_layer(void *layer, dim3 *output_size);
 

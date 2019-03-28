@@ -9,27 +9,30 @@ extern "C"
 #ifdef OPENCL
 #	include "CL/opencl.h"
 #endif
+#ifdef __ANDROID__
+#	include <android/log.h>
+#endif
 
 #ifdef __linux__
-#define BINARY_FILENAME_TO_START(name, suffix) \
-	_binary_##name##_##suffix##_start
-#define BINARY_FILENAME_TO_END(name, suffix) \
-	_binary_##name##_##suffix##_end
-#define BINARY_FILENAME_TO_SIZE(name, suffix) \
-	_binary_##name##_##suffix##_size
+#	define BINARY_FILENAME_TO_START(name, suffix) \
+		_binary_##name##_##suffix##_start
+#	define BINARY_FILENAME_TO_END(name, suffix) \
+		_binary_##name##_##suffix##_end
+#	define BINARY_FILENAME_TO_SIZE(name, suffix) \
+		_binary_##name##_##suffix##_size
 #elif defined(_WIN32)
-#define BINARY_FILENAME_TO_START(name, suffix) \
-	binary_##name##_##suffix##_start
-#define BINARY_FILENAME_TO_END(name, suffix) \
-	binary_##name##_##suffix##_end	
-#define BINARY_FILENAME_TO_SIZE(name, suffix) \
-	binary_##name##_##suffix##_size
+#	define BINARY_FILENAME_TO_START(name, suffix) \
+		binary_##name##_##suffix##_start
+#	define BINARY_FILENAME_TO_END(name, suffix) \
+		binary_##name##_##suffix##_end	
+#	define BINARY_FILENAME_TO_SIZE(name, suffix) \
+		binary_##name##_##suffix##_size
 #else
 #	error "unsupported operation system!"
 #endif
 
 #ifdef OPENCL
-#ifdef FLOAT
+#ifdef USE_FLOAT
 #	define PARSE_PRECISION strcat(options, " -DFLOAT -DDATA_TYPE=float -DREAD_WRITE_DATA_TYPE=f")
 #	define IMAGE_CHANNEL_DATA_TYPE CL_FLOAT
 #	define MEM_MAP_PTR_TYPE cl_float
@@ -40,20 +43,63 @@ extern "C"
 #endif
 #endif
 
-void mmfree(int n, ...);
-void mset(char *const X, size_t size, const char *const val, int nvals);
-void mcopy(const char *const X, char *const Y, size_t size);
-void save_volume(float *data, int width, int height, int nchannels, const char *path);
+#ifdef __ANDROID__
+#	define LOG_TAG "aicore"
+#	ifdef NDEBUG
+#		define LOGV(FMT, ...) __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+			__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#		define LOGD(FMT, ...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+			__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#		define LOGI(FMT, ...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+			__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	else
+#		define LOGV(FMT, ...)
+#		define LOGD(FMT, ...)
+#		define LOGI(FMT, ...)	
+#	endif
+#	define LOGW(FMT, ...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+		__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define LOGE(FMT, ...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+		__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define LOGF(FMT, ...) __android_log_print(ANDROID_LOG_FATAL, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+		__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#else
+#	define LOGV(FMT, ...)
+#	define LOGD(FMT, ...)
+#	define LOGI(FMT, ...)
+#	define LOGW(FMT, ...)
+#	define LOGE(FMT, ...)
+#	define LOGF(FMT, ...)
+#endif
+
+#ifdef AICORE_BUILD_DLL
+#ifdef _WIN32
+#	define AICORE_LOCAL
+#else
+#	define AICORE_LOCAL __attribute__ ((visibility("hidden")))
+#endif
+#else
+#ifdef _WIN32
+#	define AICORE_LOCAL
+#else
+#	define AICORE_LOCAL __attribute__ ((visibility("hidden")))
+#endif
+#endif
+
+AICORE_LOCAL void mmfree(int n, ...);
+AICORE_LOCAL void mset(char *const X, size_t size, const char *const val, int nvals);
+AICORE_LOCAL void mcopy(const char *const X, char *const Y, size_t size);
+AICORE_LOCAL void save_volume(float *data, int width, int height, int nchannels, const char *path);
 #ifdef OPENCL
-int nchw_to_nhwc(const float *const input, MEM_MAP_PTR_TYPE *const output, int width, int height,
+AICORE_LOCAL int nchw_to_nhwc(const float *const input, MEM_MAP_PTR_TYPE *const output, int width, int height,
 	int channels, int batch, int input_row_pitch, int output_row_pitch, int channel_block_size);
-int nhwc_to_nchw(const MEM_MAP_PTR_TYPE *const input, float *const output, int width, int height,
+AICORE_LOCAL int nhwc_to_nchw(const MEM_MAP_PTR_TYPE *const input, float *const output, int width, int height,
 	int channels, int batch, int input_row_pitch, int output_row_pitch, int channel_block_size);
 #endif
-int round_up_division_2(int x);
-int round_up_division_4(int x);
-unsigned int roundup_power_of_2(unsigned int a);
-unsigned int round_up_multiple_of_8(unsigned int x);
+AICORE_LOCAL int round_up_division_2(int x);
+AICORE_LOCAL int round_up_division_4(int x);
+AICORE_LOCAL unsigned int roundup_power_of_2(unsigned int a);
+AICORE_LOCAL unsigned int round_up_multiple_of_8(unsigned int x);
 
 #ifdef __cplusplus
 }

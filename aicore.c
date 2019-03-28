@@ -63,6 +63,8 @@ typedef struct {
 	memory_unit_t mempry_pool[16];
 	int memory_pool_size;
 	float threshold;
+	unsigned int sample_interval;
+	unsigned long long frame_counter;
 } ai_core_param_t;
 
 static ai_core_param_t core_param;
@@ -74,6 +76,9 @@ static int create_dnn_inference_thread();
 static void *dnn_inference_thread(void *param);
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
 static void *create_standard_image_object();
+#ifdef ION
+static cl_mem allocate_image_from_ion(int ion_filedesc, void *ion_hostptr, int width, int height);
+#endif
 #endif
 static int init_memory_pool();
 static void *allocate_from_memory_pool();
@@ -93,7 +98,7 @@ int ai_core_init(unsigned int width, unsigned int height)
 	cl_int errcode;
 	wrapper = cl_create_wrapper(&errcode);
 	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_create_wrapper fail, error code:%d.\n", errcode);
+		LOGE("cl_create_wrapper fail, error code:%d.\n", errcode);
 		core_param.init_status = AIC_OPENCL_INIT_FAIL;
 		return core_param.init_status;
 	}
@@ -108,18 +113,19 @@ int ai_core_init(unsigned int width, unsigned int height)
 
 int ai_core_send_image(const char *const rgb24, size_t size)
 {
+	if (core_param.frame_counter++ % core_param.sample_interval != 0) return AIC_FRAME_DISCARD;
 	void *standard_image = allocate_from_memory_pool();
 	if (!standard_image) return AIC_ALLOCATE_FAIL;
 #ifdef CL_PROFILING_ENABLE
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 #endif
- 	standardize_image_io(core_param.standardizer, (unsigned char *)rgb24, core_param.image_width,
+ 	standardize_image(core_param.standardizer, (unsigned char *)rgb24, core_param.image_width,
  		core_param.image_height, standard_image);
  	memcpy(core_param.image_queue_read_buffer, &standard_image, sizeof(void *));
 #ifdef CL_PROFILING_ENABLE
 	gettimeofday(&t2, NULL);
-	printf("CPU & GPU standardize_image_io: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
+	LOGD("CPU & GPU standardize_image: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
 #endif
 	int timer = 11;
 	const struct timespec req = {0, 100000};
@@ -138,7 +144,39 @@ int ai_core_send_image(const char *const rgb24, size_t size)
 	return AIC_OK;
 }
 
-size_t ai_core_fetch_object(object_t *const object, size_t number, float threshold)
+int ai_core_send_ion_image(int ion_filedesc, void *const ion_hostptr, int width, int height)
+{
+#ifdef ION
+	if (core_param.frame_counter++ % core_param.sample_interval != 0) return AIC_FRAME_DISCARD;
+	cl_mem input = allocate_image_from_ion(ion_filedesc, ion_hostptr, width, height);
+	if (!input) return AIC_ALLOCATE_FAIL;
+
+	void *standard_image = allocate_from_memory_pool();
+	if (!standard_image) return AIC_ALLOCATE_FAIL;
+
+ 	standardize_ion_image(core_param.standardizer, input, width, height, standard_image);
+	clReleaseMemObject(input);
+ 	memcpy(core_param.image_queue_read_buffer, &standard_image, sizeof(void *));
+
+	int timer = 11;
+	const struct timespec req = {0, 100000};
+	const unsigned int request_size = roundup_power_of_2(sizeof(void *));
+	while (--timer) {
+		unsigned int write_size = fifo_put(core_param.image_queue, core_param.image_queue_read_buffer, request_size);
+		if (write_size == request_size) break;
+		nanosleep(&req, NULL);
+	}
+	
+	if (0 == timer) {
+		back_to_memory_pool(standard_image);
+		return AIC_ENQUEUE_FAIL;
+	}	
+	
+	return AIC_OK;
+#endif
+}
+
+int ai_core_fetch_object(object_t *const object, size_t number, float threshold)
 {
 	int timer = 11;
 	const struct timespec req = {0, 100000};
@@ -149,10 +187,10 @@ size_t ai_core_fetch_object(object_t *const object, size_t number, float thresho
 		nanosleep(&req, NULL);
 	}
 	
-	if (0 == timer) return 0;
+	if (0 == timer) return AIC_DEQUEUE_FAIL;
 	core_param.threshold = threshold;
 	
-	size_t counter = 0;
+	int counter = 0;
 	list *object_list = NULL;
 	memcpy(&object_list, core_param.object_queue_write_buffer, sizeof(list *));
 	node *n = object_list->head;
@@ -163,16 +201,15 @@ size_t ai_core_fetch_object(object_t *const object, size_t number, float thresho
 			continue;
 		}
 		
-		printf("objectness:%.5f ", det->objectness);
-		int maybe = 0;
+		int most_likely_class_id = 0;
+		float most_likely_class_prob = 0;
 		for (int i = 0; i < det->classes; ++i) {
-			if (det->probabilities[i] < threshold) continue;
-			if (maybe > 0) printf(",");
-			printf("%s:%.0f%%", "cordyceps", det->probabilities[i] * 100);
-			++maybe;
+			if (det->probabilities[i] > most_likely_class_prob) {
+				most_likely_class_prob = det->probabilities[i];
+				most_likely_class_id = i;
+			}
 		}
 		
-		if (maybe) printf("\n");
 		int left    = (int)((det->bbox.x - det->bbox.w / 2) * core_param.image_width);		
 		int right   = (int)((det->bbox.x + det->bbox.w / 2) * core_param.image_width);
 		int _top    = (int)((det->bbox.y - det->bbox.h / 2) * core_param.image_height);
@@ -193,7 +230,9 @@ size_t ai_core_fetch_object(object_t *const object, size_t number, float thresho
 		object[counter].y = top;
 		object[counter].w = right - left + 1;
 		object[counter].h = bottom - top + 1;
-		object[counter].class = CORDYCEPS;
+		object[counter].class = (class_t)(CORDYCEPS + most_likely_class_id);
+		object[counter].objectness = det->objectness;
+		object[counter].probability = most_likely_class_prob;
 		
 		++counter;
 		if (counter > number) break;
@@ -264,7 +303,7 @@ int create_dnn_inference_thread()
 	
 	int ret = pthread_create(&core_param.dnn_inference_tid, &attr, dnn_inference_thread, NULL);
 	if (0 != ret) {
-		fprintf(stderr, "pthread_create[%s:%d].\n", __FILE__, __LINE__);
+		LOGE("pthread_create fail.\n");
 		core_param.thread_status = THREAD_DEAD;
 		return -1;
 	}
@@ -288,6 +327,8 @@ void ai_core_init_routine()
 	core_param.standardizer = NULL;
 	core_param.memory_pool_size = sizeof(core_param.mempry_pool) / sizeof(memory_unit_t);
 	core_param.threshold = 0.5f;
+	core_param.sample_interval = 1;
+	core_param.frame_counter = 0;
 	
 	void **layers = create_dnn();
 	int nlayers = sizeof(core_param.layers) / sizeof(core_param.layers[0]);
@@ -438,7 +479,6 @@ void **create_dnn()
 
 void *dnn_inference_thread(void *param)
 {
-	image input;
 	void *standard_image = NULL;
 	const unsigned int request_read = roundup_power_of_2(sizeof(void *));
 	const unsigned int request_write = roundup_power_of_2(sizeof(list *));
@@ -451,12 +491,7 @@ void *dnn_inference_thread(void *param)
 		}
 
 		memcpy(&standard_image, core_param.image_queue_write_buffer, sizeof(void *));
-#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
-		input.data = standard_image;
-#else
-		input.d_data = standard_image;
-#endif
-		znet_inference(core_param.net, &input);
+		znet_inference(core_param.net, standard_image);
 		back_to_memory_pool(standard_image);
 		
 		list *detections = get_detections(core_param.net, core_param.threshold, core_param.image_width, core_param.image_height);	
@@ -465,7 +500,7 @@ void *dnn_inference_thread(void *param)
 		memcpy(core_param.object_queue_read_buffer, &bests, sizeof(list *));
 		unsigned int write_size = fifo_put(core_param.object_queue, core_param.object_queue_read_buffer, request_write);
 		if (write_size != request_write) {
-			fprintf(stderr, "fifo_put fail[%s:%d].\n", __FILE__, __LINE__);
+			LOGW("fifo_put fail.\n");
 			free_detections(bests);
 		}
 
@@ -481,7 +516,7 @@ void *create_standard_image_object()
 	cl_mem_flags mem_flags = CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
 		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = CL_FLOAT
+		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
 	};
 	
 	cl_image_desc image_desc;
@@ -493,7 +528,7 @@ void *create_standard_image_object()
 	cl_int errcode;
 	cl_mem standard_image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
 	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		LOGE("clCreateImage fail, error code:%d.\n", errcode);
 		return 0;
 	}
 
@@ -502,11 +537,44 @@ void *create_standard_image_object()
 	float fill_color[] = {0.5f, 0.5f, 0.5f, 0};
 	clEnqueueFillImage(wrapper.command_queue, standard_image, fill_color, origin, region, 0, NULL, NULL);
 	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clEnqueueFillImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
+		LOGE("clEnqueueFillImage fail, error code:%d.\n", errcode);
 	}
 	
 	return standard_image;
 }
+
+#ifdef ION
+cl_mem allocate_image_from_ion(int ion_filedesc, void *ion_hostptr, int width, int height)
+{
+	cl_mem_ion_host_ptr ion_mem;
+	ion_mem.ext_host_ptr.allocation_type   = CL_MEM_ION_HOST_PTR_QCOM;
+	ion_mem.ext_host_ptr.host_cache_policy = CL_MEM_HOST_UNCACHED_QCOM;
+	ion_mem.ion_filedesc                   = ion_filedesc;
+	ion_mem.ion_hostptr                    = ion_hostptr;
+
+	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR | CL_MEM_EXT_HOST_PTR_QCOM;
+	cl_image_format image_format = {
+		.image_channel_order = CL_RGBA,
+		.image_channel_data_type = CL_UNORM_INT8
+	};
+	
+	cl_image_desc image_desc;
+	memset(&image_desc, 0, sizeof(cl_image_desc));
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = width;
+	image_desc.image_height = height;
+	image_desc.image_row_pitch = cl_get_ion_image_row_pitch(wrapper, image_format, image_desc);
+	
+	cl_int errcode;
+	cl_mem image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, &ion_mem, &errcode);
+	if (CL_SUCCESS != errcode) {
+		LOGE("clCreateImage fail, error code:%d.\n", errcode);
+		return (void *)(0);
+	}
+	
+	return image;
+}
+#endif
 #endif
 
 int init_memory_pool()
@@ -514,13 +582,16 @@ int init_memory_pool()
 	for (int i = 0; i < core_param.memory_pool_size; ++i) {
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
 		core_param.mempry_pool[i].data = create_standard_image_object();
+		if (!core_param.mempry_pool[i].data) return AIC_ALLOCATE_FAIL;
 #else
 		core_param.mempry_pool[i].data = calloc(core_param.standard_width * core_param.standard_height * 3, sizeof(float));
-#endif
 		if (!core_param.mempry_pool[i].data) return AIC_ALLOCATE_FAIL;
+		image img = {core_param.standard_width, core_param.standard_height, 3, core_param.mempry_pool[i].data};
+		set_image(&img, 0.5);
+#endif
 		core_param.mempry_pool[i].busy = 0;
 		if (0 != pthread_mutex_init(&core_param.mempry_pool[i].mutex, NULL)) {
-			fprintf(stderr, "pthread_mutex_init fail[%s:%d].\n", __FILE__, __LINE__);
+			LOGE("pthread_mutex_init fail.\n");
 			return AIC_ALLOCATE_FAIL;
 		}
 		core_param.mempry_pool[i].lock = pthread_mutex_lock;
@@ -573,10 +644,10 @@ void wait_for_thread_dead(pthread_t tid)
 	while (timer--) {
 		int ret = pthread_kill(tid, 0);
 		if (ESRCH == ret) {
-			fprintf(stderr, "the thread didn't exists or already quit[%s:%d].\n", __FILE__, __LINE__);
+			LOGI("the thread didn't exists or already quit.\n");
 			return;
 		} else if (EINVAL == ret) {
-			fprintf(stderr, "signal is invalid[%s:%d].\n", __FILE__, __LINE__);
+			LOGE("signal is invalid.\n");
 			return;
 		} else {
 			nanosleep(&req, NULL);
@@ -590,12 +661,12 @@ void clear_object_list()
 	const int request_size = roundup_power_of_2(sizeof(list *));
 	while (fifo_len(core_param.object_queue)) {
 		while (fifo_get(core_param.object_queue, core_param.object_queue_write_buffer, request_size) != request_size);
-		printf("clear object queue...\n");
+		LOGI("clear object queue...\n");
 		list *object_list = NULL;
 		memcpy(&object_list, core_param.object_queue_write_buffer, sizeof(list *));
 		free_detections(object_list);
 	}
-	printf("clear object queue over!\n");
+	LOGI("clear object queue over!\n");
 }
 
 void save_standard_image(void *image, int width, int height, const char *filename)
@@ -603,7 +674,7 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 #if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	char *red = calloc(width * height, sizeof(unsigned char));
 	if (!red) {
-		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		LOGE("calloc fail.\n");
 		return;
 	}
 	
@@ -618,7 +689,7 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 #else
 	char *rgb24 = calloc(width * height * 3, sizeof(unsigned char));
 	if (!rgb24) {
-		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
+		LOGE("calloc fail.\n");
 		return;
 	}
 

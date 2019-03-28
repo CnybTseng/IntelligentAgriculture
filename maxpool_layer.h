@@ -1,12 +1,13 @@
 #ifndef _MAXPOOL_LAYER_H_
 #define _MAXPOOL_LAYER_H_
 
-#include "znet.h"
-
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+#include "znet.h"
+#include "zutils.h"
 
 #ifdef OPENCL
 struct maxpool_gpu_context;
@@ -30,14 +31,14 @@ typedef struct {
 #endif
 } maxpool_layer;
 
-void free_maxpool_layer(void *_layer);
-void print_maxpool_layer_info(void *_layer, int id);
-void set_maxpool_layer_input(void *_layer, void *input);
-void *get_maxpool_layer_output(void *_layer);
-void forward_maxpool_layer(void *_layer, znet *net);
-void backward_maxpool_layer(maxpool_layer *layer, znet *net);
-int maxpool_output_width(maxpool_layer *layer);
-int maxpool_output_height(maxpool_layer *layer);
+AICORE_LOCAL void free_maxpool_layer(void *_layer);
+AICORE_LOCAL void print_maxpool_layer_info(void *_layer, int id);
+AICORE_LOCAL void set_maxpool_layer_input(void *_layer, void *input);
+AICORE_LOCAL void *get_maxpool_layer_output(void *_layer);
+AICORE_LOCAL void forward_maxpool_layer(void *_layer, znet *net);
+AICORE_LOCAL void backward_maxpool_layer(maxpool_layer *layer, znet *net);
+AICORE_LOCAL int maxpool_output_width(maxpool_layer *layer);
+AICORE_LOCAL int maxpool_output_height(maxpool_layer *layer);
 
 #ifdef __cplusplus
 }

@@ -1,15 +1,16 @@
 #ifndef _RESAMPLE_H_
 #define _RESAMPLE_H_
 
-#include "znet.h"
-#ifdef OPENCL
-#	include "cl_wrapper.h"
-#endif
-
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+#include "znet.h"
+#ifdef OPENCL
+#	include "cl_wrapper.h"
+#endif
+#include "zutils.h"
 
 #ifdef OPENCL
 struct resample_context;
@@ -32,15 +33,15 @@ typedef struct {
 #endif
 } resample_layer;
 
-void free_resample_layer(void *_layer);
-void print_resample_layer_info(void *_layer, int id);
-void set_resample_layer_input(void *_layer, void *input);
-void *get_resample_layer_output(void *_layer);
-void forward_resample_layer(void *_layer, znet *net);
-void backward_resample_layer(resample_layer *layer, znet *net);
-void upsample(float *in, int width, int height, int nchannels, int stride, float *out);
+AICORE_LOCAL void free_resample_layer(void *_layer);
+AICORE_LOCAL void print_resample_layer_info(void *_layer, int id);
+AICORE_LOCAL void set_resample_layer_input(void *_layer, void *input);
+AICORE_LOCAL void *get_resample_layer_output(void *_layer);
+AICORE_LOCAL void forward_resample_layer(void *_layer, znet *net);
+AICORE_LOCAL void backward_resample_layer(resample_layer *layer, znet *net);
+AICORE_LOCAL void upsample(float *in, int width, int height, int nchannels, int stride, float *out);
 #ifdef OPENCL
-void get_resample_output_image_size(resample_layer *layer, int *width, int *height);
+AICORE_LOCAL void get_resample_output_image_size(resample_layer *layer, int *width, int *height);
 #endif
 
 #ifdef __cplusplus

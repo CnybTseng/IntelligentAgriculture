@@ -1,6 +1,11 @@
 #ifndef _ZNET_H_
 #define _ZNET_H_
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #ifdef NNPACK
@@ -10,11 +15,7 @@
 #ifdef OPENCL
 #	include "CL/opencl.h"
 #endif
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif
+#include "zutils.h"
 
 /** @typedef enum WORK_MODE
  ** @brief 枚举znet的工作模式.
@@ -106,7 +107,7 @@ typedef struct {
  ** @param output_size 输出的三维张量的大小.
  ** @return 返回卷积层实例指针.
  **/
-void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
+AICORE_LOCAL void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filter_size, int nfilters,
                                int stride, int padding, int batch_size, int batch_norm, dim3 *output_size);
 
 /** @brief 创建最大池化层.
@@ -118,7 +119,7 @@ void *make_convolutional_layer(ACTIVATION activation, dim3 input_size, int filte
  ** @param output_size 输出的三维张量的大小.
  ** @return 返回最大池化层实例指针.
  **/ 
-void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int padding, int batch_size,
+AICORE_LOCAL void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int padding, int batch_size,
                          dim3 *output_size);
 						 
 /** @brief 创建瞄一眼层.
@@ -131,7 +132,7 @@ void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int paddi
  ** @param anchor_boxes 定标框框.
  ** @return 返回瞄一眼层实例指针.
  **/ 
-void *make_yolo_layer(dim3 input_size, int batch_size, int nscales, int total_scales, int classes, int *mask,
+AICORE_LOCAL void *make_yolo_layer(dim3 input_size, int batch_size, int nscales, int total_scales, int classes, int *mask,
                       int *anchor_boxes);
 					  
 /** @brief 创建路线层.
@@ -142,7 +143,7 @@ void *make_yolo_layer(dim3 input_size, int batch_size, int nscales, int total_sc
  ** @param output_size 输出的三维张量的大小.
  ** @return 返回路线层实例的指针.
  **/ 
-void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_id, dim3 *output_size);
+AICORE_LOCAL void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_id, dim3 *output_size);
 
 /** @brief 创建重采样层.
  ** @param input_size 输入的三维张量的尺寸.
@@ -151,7 +152,7 @@ void *make_route_layer(int batch_size, int nroutes, void *layers[], int *layer_i
  ** @param output_size 输出的三维张量的大小.
  ** @return 返回重采样层实例的指针.
  **/
-void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *output_size);
+AICORE_LOCAL void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *output_size);
 /** @ }*/
 
 
@@ -164,63 +165,63 @@ void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *out
  ** @param filename 权重文件名.
  ** @return 卷积神经网络实例指针.
  **/
-znet *znet_create(void *layers[], int nlayers, const char *weight_filename);
+AICORE_LOCAL znet *znet_create(void *layers[], int nlayers, const char *weight_filename);
 
 /** @brief 训练卷积神经网络.本接口暂未实现.
  ** @param net 卷积神经网络实例指针.
  ** @param ds 数据商店实例指针.
  ** @param opts 训练参数设置.
  **/
-void znet_train(znet *net, data_store *ds, train_options *opts);
+AICORE_LOCAL void znet_train(znet *net, data_store *ds, train_options *opts);
 
 /** @brief 经卷积神经网络推断.
  ** @param net 卷积神经网络实例指针.
  ** @param input 输入的图像.
  ** @return 返回推断输出.
  **/
-float *znet_inference(znet *net, image *input);
+AICORE_LOCAL float *znet_inference(znet *net, void *input);
 
 /** @brief 摧毁卷积神经网络实例.
  ** @param net 卷积神经网络实例指针.
  **/
-void znet_destroy(znet *net);
+AICORE_LOCAL void znet_destroy(znet *net);
 
 /** @brief 打印卷积神经网络架构信息. 
  ** @param net 卷积神经网络实例指针.
  **/
-void znet_architecture(znet *net);
+AICORE_LOCAL void znet_architecture(znet *net);
 
 /** @brief 获取卷积神经网络的工作模式. 
  ** @param net 卷积神经网络实例指针.
  ** @return 卷积神经网络的工作模式.
  **/
-WORK_MODE znet_workmode(znet *net);
+AICORE_LOCAL WORK_MODE znet_workmode(znet *net);
 
 /** @brief 获取卷积神经网络的所有层.
  ** @param net 卷积神经网络实例指针.
  ** @return 返回卷积神经网络的所有层.
  **/
-void **znet_layers(znet *net);
+AICORE_LOCAL void **znet_layers(znet *net);
 
 #ifdef NNPACK
 /** @brief 获取卷积神经网络的线程池句柄.
  ** @param net 卷积神经网络实例指针.
  ** @return 返回卷积神经网络的线程池句柄.
  **/
-pthreadpool_t znet_threadpool(znet *net);
+AICORE_LOCAL pthreadpool_t znet_threadpool(znet *net);
 #endif
 
 /** @brief 获取卷积神经网络输入层的宽度.
  ** @param net 卷积神经网络实例指针
  ** @return 返回卷积神经网络输入层的宽度.
  **/
-int znet_input_width(znet *net);
+AICORE_LOCAL int znet_input_width(znet *net);
 
 /** @brief 获取卷积神经网络输入层的高度.
  ** @param net 卷积神经网络实例指针.
  ** @return 返回卷积神经网络输入层的高度.
  **/
-int znet_input_height(znet *net);
+AICORE_LOCAL int znet_input_height(znet *net);
 /** @ } */
 
 
@@ -234,19 +235,19 @@ int znet_input_height(znet *net);
  ** @param height 输入卷积神经网络图像的高度.
  ** @return 返回物体检测结果的链表.
  **/
-list *get_detections(znet *net, float thresh, int width, int height);
+AICORE_LOCAL list *get_detections(znet *net, float thresh, int width, int height);
 
 /** @name 轻柔的非最大值抑制. 
  ** @param l 未经非最大值抑制的物体检测结果的链表.
  ** @param sigma 非最大值抑制力度.
  ** @return 经非最大值抑制的物体检测结果的链表.
  **/
-list *soft_nms(list *l, float sigma);
+AICORE_LOCAL list *soft_nms(list *l, float sigma);
 
 /** @brief 释放物体检测结果占用的内存.
  ** @param l 物体检测结果的链表.
  **/
-void free_detections(list *l);
+AICORE_LOCAL void free_detections(list *l);
 /** @ } */
 
 #ifdef __cplusplus

@@ -33,30 +33,15 @@ typedef struct {
 	image *standard;
 } test_image;
 
-#ifdef __INTEL_SSE__
-extern void split_channel_sse(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
-#endif
-#ifdef __ARM_NEON__
-extern void split_channel_neon(unsigned char *src, unsigned char *dst, int src_pitch, int w, int h);
-extern void resize_image_neon(unsigned char *src, unsigned char *dst, int src_w, int src_h,
-                              int dst_w, int dst_h, int nchannels);
-extern void embed_image_neon(unsigned char *src, image *dst, int src_w, int src_h);	
-extern void make_bilinear_interp_table(int src_w, int src_h, int dst_w, int dst_h, short *x_tab,
-                                       short *y_tab, unsigned short *dx_tab, unsigned short *dy_tab);	
-extern void package_neighbor_pixle(int src_w, int src_h, int dst_w, int dst_h, short *x_tab,
-                                   short *y_tab, unsigned char *src, unsigned char *pack);	
-extern void resize_image_neon_faster(unsigned char *pack, unsigned char *dst, int dst_w, int dst_h,
-                                     int nchannels, unsigned short *dx_tab, unsigned short *dy_tab);								   
+#ifdef __ARM_NEON__							   
 void test_resize_faster(int argc, char *argv[]);
 #endif
 #ifdef OPENCL
 cl_wrapper wrapper;
 extern char BINARY_FILENAME_TO_START(utils, cl);
 extern char BINARY_FILENAME_TO_END(utils, cl);
-extern void load_direct_convolution_weight(direct_convolution_context *context, float *weights, float *biases);
 #endif
-extern void resize_image_hv(unsigned char *src, unsigned char *dst, int src_w, int src_h,
-                            int dst_w, int dst_h, int nchannels);
+
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height);
 void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh);
 void test_multi_free(int argc, char *argv[]);
@@ -89,7 +74,7 @@ void test_resample_layer_with_gpu(int argc, char *argv[]);
 void test_nhwc_to_nchw(int argc, char *argv[]);
 void test_image_standardizer(int argc, char *argv[]);
 void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[]);
-void test_standardizer_io(int argc, char *argv[]);
+void test_ion_image_standardizer(int argc, char *argv[]);
 void test_half(int argc, char *argv[]);
 void test_read_half_value_from_float_image(int argc, char *argv[]);
 
@@ -366,14 +351,14 @@ void test_yolov3_tiny(int argc, char *argv[])
 	printf("inference iterations %d\n", N);
 
 #ifdef NNPACK	
-	znet_inference(net, standard);
+	znet_inference(net, standard->data);
 #endif	
 	
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
 		printf("------------------------------------------------------\n");
-		znet_inference(net, standard);
+		znet_inference(net, standard->data);
 	}
 	gettimeofday(&t2, NULL);
 	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
@@ -2049,124 +2034,7 @@ void test_maxpool_layer_with_gpu(int argc, char *argv[])
 }
 
 void test_direct_convolution(int argc, char *argv[])
-{
-#ifdef OPENCL
-	float *weights = NULL;
-	float *biases = NULL;
-	float *input = NULL;
-	cl_mem d_input = 0;
-	convolutional_layer *layer = NULL;
-	dim3 input_size = {13, 13, 1024};
-	const int nfilters = 256;
-	
-	int save_result = 0;
-	if (argc > 1) save_result = atoi(argv[1]);
-	
-	cl_int errcode;
-	wrapper = cl_create_wrapper(&errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-	
-	dim3 output_size;
-	layer = make_convolutional_layer(LEAKY, input_size, 1, nfilters, 1, 0, 1, 1, &output_size);
-	
-	weights = calloc(input_size.c * nfilters, sizeof(float));
-	if (!weights) {
-		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
-		goto cleanup;
-	}
-	
-	srand(time(NULL));
-	for (int i = 0; i < input_size.c * nfilters; ++i) {
-		weights[i] = rand() / (double)RAND_MAX;
-	}
-	
-	if (save_result) save_volume(weights, 1, 1, input_size.c * nfilters, "weights.txt");
-	
-	biases = calloc(nfilters, sizeof(float));
-	if (!biases) {
-		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
-		goto cleanup;
-	}
-	
-	srand(time(NULL));
-	for (int i = 0; i < nfilters; ++i) {
-		biases[i] = rand() / (double)RAND_MAX;
-	}
-	
-	if (save_result) save_volume(biases, nfilters, 1, 1, "biases.txt");
-	
-	input = calloc(input_size.w * input_size.h * input_size.c, sizeof(float));
-	if (!input) {
-		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
-		goto cleanup;
-	}
-	
-	srand(time(NULL));
-	for (int i = 0; i < input_size.w * input_size.h * input_size.c; ++i) {
-		input[i] = 0.1f * (rand() / (double)RAND_MAX - 0.5f);
-	}
-
-	if (save_result) save_volume(input, input_size.w, input_size.h, input_size.c, "input.txt");
-	
-	const int input_image_width = input_size.w * round_up_division_4(input_size.c);
-	const int input_image_height = input_size.h;
-	
-	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
-	cl_image_format image_format = {
-		.image_channel_order = CL_RGBA,
-		.image_channel_data_type = IMAGE_CHANNEL_DATA_TYPE
-	};
-	
-	cl_image_desc image_desc;
-	memset(&image_desc, 0, sizeof(cl_image_desc));
-	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
-	image_desc.image_width = input_image_width;
-	image_desc.image_height = input_image_height;
-	
-	d_input = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "clCreateImage fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		goto cleanup;
-	}
-	
-	cl_event event;
-	size_t origin[] = {0, 0, 0};
-	size_t region[] = {input_image_width, input_image_height, 1};
-	size_t image_row_pitch, image_slice_pitch;
-	MEM_MAP_PTR_TYPE *h_input = clEnqueueMapImage(wrapper.command_queue, d_input, CL_TRUE, CL_MAP_WRITE,
-		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	image_row_pitch = image_row_pitch / sizeof(MEM_MAP_PTR_TYPE);
-	nchw_to_nhwc(input, h_input, input_size.w, input_size.h, input_size.c, 1, input_size.w, image_row_pitch, 4);
-	// if (save_result) save_volume(h_input, input_image_width << 2, input_image_height, 1, "formated_inputs.txt");
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_input, h_input, 0, NULL, &event);
-		
-	memcpy(layer->weights, weights, input_size.c * nfilters * sizeof(float));
-	memcpy(layer->biases, biases, nfilters * sizeof(float));
-	load_direct_convolution_weight(layer->dcc, weights, biases);
-	set_convolutional_layer_input(layer, d_input);
-	forward_convolutional_layer(layer, NULL);
-	cl_mem d_output = get_convolutional_layer_output(layer);
-	
-	const int output_image_width = output_size.w * round_up_division_4(output_size.c);
-	const int output_image_height = output_size.h;
-	region[0] = output_image_width;
-	region[1] = output_image_height;
-	float *h_output = clEnqueueMapImage(wrapper.command_queue, d_output, CL_TRUE, CL_MAP_READ,
-		origin, region, &image_row_pitch, &image_slice_pitch, 0, NULL, NULL, &errcode);
-	if (save_result) save_volume(h_output, output_image_width << 2, output_image_height, 1, "output.txt");
-	clEnqueueUnmapMemObject(wrapper.command_queue, d_output, h_output, 0, NULL, &event);
-	
-	cleanup:
-	free(input);
-	free(biases);
-	free(weights);
-	clReleaseMemObject(d_input);
-	cl_destroy_wrapper(wrapper);
-	free_convolution_layer(layer);
-#endif	
+{	
 }
 
 void test_resample_layer_with_gpu(int argc, char *argv[])
@@ -2259,7 +2127,7 @@ void test_resample_layer_with_gpu(int argc, char *argv[])
 
 void test_nhwc_to_nchw(int argc, char *argv[])
 {
-#if defined(OPENCL) && defined(FLOAT)
+#if defined(OPENCL) && defined(USE_FLOAT)
 	const int w = 13;
 	const int h = 13;
 	const int c = 18;
@@ -2304,6 +2172,7 @@ void test_image_standardizer(int argc, char *argv[])
 	
 	const int width = get_bmp_width(bmp);
 	const int height = get_bmp_height(bmp);
+	const unsigned char *data = get_bmp_data(bmp);
 	const int standard_width = 416;
 	const int standard_height = 416;
 	
@@ -2313,16 +2182,15 @@ void test_image_standardizer(int argc, char *argv[])
 	int N = 1;
 	if (argc > 2) N = atoi(argv[2]);
 	
-	image *standard_image = NULL;
+	cl_mem d_standard_image = get_standardizer_output_ptr(standardizer);
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-		standard_image = standardize_image(standardizer, bmp);
+		standardize_image(standardizer, data, width, height, d_standard_image);
 	}
 	gettimeofday(&t2, NULL);
 	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
 	
-	cl_mem d_standard_image = standard_image->d_data;
 	standard_image_buffer = calloc(standard_width * standard_height * 3, sizeof(unsigned char));
 	if (!standard_image_buffer) {
 		fprintf(stderr, "calloc fail[%s:%d].\n", __FILE__, __LINE__);
@@ -2362,7 +2230,6 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[])
 	bitmap *bmp = NULL;
 	image_standardizer *standardizer = NULL;
 	znet *net = NULL;
-	image *standard_image = NULL;
 #ifdef OPENCL	
 	cl_int errcode;
 	wrapper = cl_create_wrapper(&errcode);
@@ -2379,13 +2246,15 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[])
 	
 	const int width = get_bmp_width(bmp);
 	const int height = get_bmp_height(bmp);
+	const unsigned char *data = get_bmp_data(bmp);
 	const int standard_width = 416;
 	const int standard_height = 416;
 	
 	standardizer = create_image_standardizer(width, height, standard_width, standard_height, 3);
 	if (!standardizer) goto cleanup;
 	
-	standard_image = standardize_image(standardizer, bmp);
+	void *standard_image = get_standardizer_output_ptr(standardizer);
+	standardize_image(standardizer, data, width, height, standard_image);
 
 	void *layers[24];
 	int nlayers = sizeof(layers) / sizeof(layers[0]);
@@ -2505,7 +2374,7 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[])
 #endif	
 }
 
-void test_standardizer_io(int argc, char *argv[])
+void test_ion_image_standardizer(int argc, char *argv[])
 {
 	bitmap *bmp = NULL;
 	image_standardizer *standardizer = NULL;
@@ -2528,7 +2397,7 @@ void test_standardizer_io(int argc, char *argv[])
 
 	unsigned char *data = get_bmp_data(bmp);
 	float *output = calloc(standard_width * standard_height * 3, sizeof(float));
-	standardize_image_io(standardizer, data, width, height, output);
+	standardize_image(standardizer, data, width, height, output);
 
 	red = calloc(standard_width * standard_height, sizeof(unsigned char));
 	

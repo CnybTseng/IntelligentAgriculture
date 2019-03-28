@@ -1,6 +1,5 @@
 #include <string.h>
 #include "resample_layer.h"
-#include "zutils.h"
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
@@ -66,7 +65,10 @@ void *make_resample_layer(dim3 input_size, int batch_size, int stride, dim3 *out
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
 	if (!layer->output) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
-		cleanup:free_resample_layer(layer);
+#ifdef OPENCL
+		cleanup:
+#endif
+		free_resample_layer(layer);
 		return 0;
 	}
 	

@@ -1,17 +1,18 @@
 #ifndef _CONVOLUTIONAL_LAYER_H_
 #define _CONVOLUTIONAL_LAYER_H_
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #include "znet.h"
 #include "winograd_convolution.h"
 #ifdef OPENCL
 #	include "cl_wrapper.h"
 #endif
 #include "gemm.h"
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif
+#include "zutils.h"
 
 #ifdef OPENCL
 struct direct_convolution_context;
@@ -59,20 +60,20 @@ typedef struct {
 	gemm_context *gc;
 } convolutional_layer;
 
-void free_convolution_layer(void *_layer);
-void print_convolutional_layer_info(void *_layer, int id);
-void set_convolutional_layer_input(void *_layer, void *input);
-void *get_convolutional_layer_output(void *_layer);
-void forward_convolutional_layer(void *_layer, znet *net);
-void backward_convolutional_layer(convolutional_layer *layer, znet *net);
-void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp);
-void load_convolutional_layer_weights_from_buffer(convolutional_layer *layer, char **buffer);
-int convolutional_output_width(convolutional_layer *layer);
-int convolutional_output_height(convolutional_layer *layer);
-void add_bias(float *output, float *biases, int batch_size, int nchannels, int size);
-void mul_bias(float *output, float *scales, int batch_size, int nchannels, int size);
+AICORE_LOCAL void free_convolution_layer(void *_layer);
+AICORE_LOCAL void print_convolutional_layer_info(void *_layer, int id);
+AICORE_LOCAL void set_convolutional_layer_input(void *_layer, void *input);
+AICORE_LOCAL void *get_convolutional_layer_output(void *_layer);
+AICORE_LOCAL void forward_convolutional_layer(void *_layer, znet *net);
+AICORE_LOCAL void backward_convolutional_layer(convolutional_layer *layer, znet *net);
+AICORE_LOCAL void load_convolutional_layer_weights(convolutional_layer *layer, FILE *fp);
+AICORE_LOCAL void load_convolutional_layer_weights_from_buffer(convolutional_layer *layer, char **buffer);
+AICORE_LOCAL int convolutional_output_width(convolutional_layer *layer);
+AICORE_LOCAL int convolutional_output_height(convolutional_layer *layer);
+AICORE_LOCAL void add_bias(float *output, float *biases, int batch_size, int nchannels, int size);
+AICORE_LOCAL void mul_bias(float *output, float *scales, int batch_size, int nchannels, int size);
 #ifdef OPENCL
-void get_direct_convolution_output_image_size(convolutional_layer *layer, int *width, int *height);
+AICORE_LOCAL void get_direct_convolution_output_image_size(convolutional_layer *layer, int *width, int *height);
 #endif
 
 #ifdef __cplusplus

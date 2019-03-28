@@ -1,16 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef OPENCL
-#	include "cl_wrapper.h"
-#endif
 #include "znet.h"
 #include "convolutional_layer.h"
 #include "maxpool_layer.h"
 #include "route_layer.h"
 #include "resample_layer.h"
 #include "yolo_layer.h"
-#include "zutils.h"
 
 extern char BINARY_FILENAME_TO_START(agriculture, weights);
 
@@ -24,7 +20,7 @@ struct znet {
 	WORK_MODE work_mode;
 	int nlayers;
 	void **layers;
-	float *input;
+	void *input;
 	float *output;
 	int width;
 	int height;
@@ -38,19 +34,12 @@ struct znet {
 #ifdef NNPACK
 	pthreadpool_t threadpool;
 #endif
-#ifdef OPENCL
-	cl_mem d_input;
-#endif
 };
 
 static int convnet_parse_input_size(znet *net);
 static int convnet_parse_layer(znet *net);
 static int __attribute__((unused)) convnet_parse_weights(znet *net);
 static int convnet_parse_weights_from_buffer(znet *net);
-
-#ifdef OPENCL
-cl_wrapper wrapper;
-#endif
 
 znet *znet_create(void *layers[], int nlayers, const char *weight_filename)
 {
@@ -130,26 +119,15 @@ void znet_train(znet *net, data_store *ds, train_options *opts)
 	fprintf(stderr, "Not implemented[%s:%d].\n", __FILE__, __LINE__);
 }
 
-float *znet_inference(znet *net, image *input)
+float *znet_inference(znet *net, void *input)
 {
 	net->work_mode = INFERENCE;
-#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
-	net->input = input->data;
-#else
-	net->d_input = input->d_data;
-#endif	
+	net->input = input;
+	
 	for (int i = 0; i < net->nlayers; ++i) {
-#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 		net->set_layer_input[i](net->layers[i], net->input);
-#else
-		net->set_layer_input[i](net->layers[i], net->d_input);
-#endif
 		net->forward[i](net->layers[i], net);
-#if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 		net->input = net->get_layer_output[i](net->layers[i]);
-#else
-		net->d_input = net->get_layer_output[i](net->layers[i]);
-#endif
 	}
 
 	return 0;

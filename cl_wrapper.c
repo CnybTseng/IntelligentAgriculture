@@ -39,11 +39,7 @@ cl_wrapper cl_create_wrapper(cl_int *errcode)
 	*errcode = clGetDeviceIDs(wrapper.platform, CL_DEVICE_TYPE_GPU, num_entries, &wrapper.device, NULL);
 	if (CL_SUCCESS != *errcode) return wrapper;
 
-	cl_context_properties context_properties[] = {
-#if 0
-		CL_GL_CONTEXT_KHR, (cl_context_properties)eglGetCurrentContext(),
-		CL_WGL_HDC_KHR, (cl_context_properties)eglGetCurrentDisplay(),
-#endif		
+	cl_context_properties context_properties[] = {		
 		CL_CONTEXT_PLATFORM, (cl_context_properties)wrapper.platform, 0
 	};
 	
@@ -65,16 +61,6 @@ cl_wrapper cl_create_wrapper(cl_int *errcode)
 	}
 #endif	
 	return wrapper;
-}
-
-cl_context cl_get_wrapper_context(cl_wrapper wrapper)
-{
-	return wrapper.context;
-}
-
-cl_command_queue cl_get_wrapper_command_queue(cl_wrapper wrapper)
-{
-	return wrapper.command_queue;
 }
 
 cl_program cl_make_wrapper_program(cl_wrapper wrapper, const char *filename, char *buffer, const char *options, cl_int *errcode)

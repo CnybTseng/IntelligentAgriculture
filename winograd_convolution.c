@@ -7,7 +7,6 @@
 #ifdef OPENCL
 #	include "cl_wrapper.h"
 #endif
-#include "zutils.h"
 #include "half.h"
 
 #ifdef OPENCL

@@ -14,7 +14,6 @@
 #	include "cl_wrapper.h"
 #endif
 #include "gemm.h"
-#include "zutils.h"
 
 struct gemm_context {
 #ifdef OPENCL
@@ -58,17 +57,17 @@ extern char BINARY_FILENAME_TO_END(cl_common, h);
 extern char BINARY_FILENAME_TO_START(blas, cl);
 extern char BINARY_FILENAME_TO_END(blas, cl);
 
-void gemm_nn_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
+static void gemm_nn_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
                 float *B, int ldb, float beta, float *C, int ldc);
-void gemm_nn_cl_sm(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
-                   float *B, int ldb, float beta, float *C, int ldc);
-void gemm_nn_cl_tp(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
-                   float *B, int ldb, float beta, float *C, int ldc);
+static void __attribute__((unused)) gemm_nn_cl_sm(gemm_context *context, int m, int n, int k, float alpha,
+                   float *A, int lda, float *B, int ldb, float beta, float *C, int ldc);
+static void __attribute__((unused)) gemm_nn_cl_tp(gemm_context *context, int m, int n, int k, float alpha,
+                   float *A, int lda, float *B, int ldb, float beta, float *C, int ldc);
 #ifdef __linux__
-void gemm_nn_cl_ion(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,
-                    float *B, int ldb, float beta, float *C, int ldc);
+static void __attribute__((unused)) gemm_nn_cl_ion(gemm_context *context, int m, int n, int k, float alpha,
+                    float *A, int lda, float *B, int ldb, float beta, float *C, int ldc);
 #endif
-void gemm_nt_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,				
+static void gemm_nt_cl(gemm_context *context, int m, int n, int k, float alpha, float *A, int lda,				
                 float *B, int ldb, float beta, float *C, int ldc);				
 #endif
 

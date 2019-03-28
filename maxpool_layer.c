@@ -5,7 +5,6 @@
 #ifdef OPENCL
 #	include "cl_wrapper.h"
 #endif
-#include "zutils.h"
 
 #ifdef NNPACK
 struct maxpool_thread_param {
@@ -81,7 +80,10 @@ void *make_maxpool_layer(dim3 input_size, int filter_size, int stride, int paddi
 	layer->output = calloc(layer->noutputs * batch_size, sizeof(float));
 	if (!layer->output) {
 		fprintf(stderr, "calloc[%s:%d].\n", __FILE__, __LINE__);
-		cleanup:free_maxpool_layer(layer);
+#ifdef OPENCL
+		cleanup:
+#endif
+		free_maxpool_layer(layer);
 	}
 	
 	return (void *)layer;

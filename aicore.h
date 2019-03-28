@@ -15,6 +15,27 @@ the terms of the BSD license (see the COPYING file).
 #ifndef _AICORE_H_
 #define _AICORE_H_
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#include <stddef.h>
+
+#ifdef AICORE_BUILD_DLL
+#ifdef _WIN32
+#	define AICORE_EXPORT __declspec(dllexport)
+#else
+#	define AICORE_EXPORT __attribute__ ((visibility("default"))) extern
+#endif
+#else
+#ifdef _WIN32
+#	define AICORE_EXPORT __declspec(dllimport)
+#else
+#	define AICORE_EXPORT __attribute__ ((visibility("default")))
+#endif
+#endif
+
 #define AIC_OK                              0
 #define AIC_ALLOCATE_FAIL                  -1
 #define AIC_FILE_NOT_EXIST                 -2
@@ -24,28 +45,8 @@ the terms of the BSD license (see the COPYING file).
 #define AIC_THREAD_CREATE_FAIL             -5
 #define AIC_ENQUEUE_FAIL                   -6
 #define AIC_DEQUEUE_FAIL                   -7
-#define AIC_OPENCL_INIT_FAIL               -8      
-
-#include <stddef.h>
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif
-
-#ifdef AICORE_BUILD_DLL
-#ifdef _WIN32
-#	define AICORE_EXPORT __declspec(dllexport)
-#else
-#	define AICORE_EXPORT extern
-#endif
-#else
-#ifdef _WIN32
-#	define AICORE_EXPORT __declspec(dllimport)
-#else
-#	define AICORE_EXPORT
-#endif
-#endif
+#define AIC_OPENCL_INIT_FAIL               -8
+#define AIC_FRAME_DISCARD                  -9
 
 /** @typedef enum class_t
  ** @brief 枚举物体类别
@@ -58,11 +59,13 @@ typedef enum {
  ** @brief 物体的结构构体定义.
  **/
 typedef struct {
-	int x;			// 物体左上角横坐标.
-	int y;			// 物体左上角纵坐标.
-	int w;			// 物体宽度.
-	int h;			// 物体高度.
-	class_t class;	// 类别ID.
+	int x;				// 物体左上角横坐标.
+	int y;				// 物体左上角纵坐标.
+	int w;				// 物体宽度.
+	int h;				// 物体高度.
+	class_t class;		// 类别ID.
+	float objectness;	// 区域含有物体的概率.
+	float probability;	// 类别概率.
 } object_t;
 
 /** @brief 初始化AICore模块.
@@ -81,6 +84,16 @@ AICORE_EXPORT int ai_core_init(unsigned int width, unsigned int height);
  **/
 AICORE_EXPORT int ai_core_send_image(const char *const rgb24, size_t size);
 
+/** @brief 将通过ION创建的图像放入AICore模块的队列缓冲区.请使用RGBA格式的图像.
+ ** @param ion_filedesc ION文件描述符.
+ ** @param ion_hostptr 指向通过ION分配的内存的主机端指针.
+ ** @param width 图像宽度.
+ ** @param height 图像高度.
+ ** @return 如果发送成功,返回AIC_OK.
+ **         如果发送失败,返回错误码.
+ **/
+AICORE_EXPORT int ai_core_send_ion_image(int ion_filedesc, void *const ion_hostptr, int width, int height);
+
 /** @brief 从AICore模块获取检测到的物体.
  ** @param object 物体buffer.
  ** @param number 最多返回的物体个数.如果置信度超过阈值的物体多于需要返回的最大个数,则返回置信度最靠前的number个物体.
@@ -88,7 +101,7 @@ AICORE_EXPORT int ai_core_send_image(const char *const rgb24, size_t size);
  ** @return 如果获取成功,返回实际检测到的物体个数.
  **         如果获取失败,返回错误码.
  **/
-AICORE_EXPORT size_t ai_core_fetch_object(object_t *const object, size_t number, float threshold);
+AICORE_EXPORT int ai_core_fetch_object(object_t *const object, size_t number, float threshold);
 
 /** @brief 释放AICore模块所有资源.
  **/
