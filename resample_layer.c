@@ -277,13 +277,13 @@ void forward_resample_layer_gpu(resample_layer *layer)
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
-	printf("GPU, upsample: %fms.\n", duration);
+	LOGD("GPU, upsample: %fms.\n", duration);
 #endif
 	clReleaseEvent(event);
 }

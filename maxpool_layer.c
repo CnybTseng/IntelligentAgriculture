@@ -333,13 +333,13 @@ void forward_maxpool_layer_gpu(maxpool_layer *layer)
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
-	printf("GPU, maxpool_2x2: %fms.\n", duration);
+	LOGD("GPU, maxpool_2x2: %fms.\n", duration);
 #endif
 	clReleaseEvent(event);
 }

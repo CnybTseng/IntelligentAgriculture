@@ -64,12 +64,12 @@ extern "C"
 #	define LOGF(FMT, ...) __android_log_print(ANDROID_LOG_FATAL, LOG_TAG, "[%s:%d:%s]:" FMT,	\
 		__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
 #else
-#	define LOGV(FMT, ...)
-#	define LOGD(FMT, ...)
-#	define LOGI(FMT, ...)
-#	define LOGW(FMT, ...)
-#	define LOGE(FMT, ...)
-#	define LOGF(FMT, ...)
+#	define LOGV(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define LOGD(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define LOGI(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define LOGW(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define LOGE(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define LOGF(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
 #endif
 
 #ifdef AICORE_BUILD_DLL

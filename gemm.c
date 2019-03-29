@@ -363,12 +363,12 @@ void gemm_nn_cl(gemm_context *context, int m, int n, int k, float alpha, float *
 	errcode = clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	printf("gemm_nn_cl(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
+	LOGD("gemm_nn_cl(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 
@@ -496,12 +496,12 @@ void gemm_nn_cl_sm(gemm_context *context, int m, int n, int k, float alpha, floa
 			global_work_size, NULL, 0, NULL, &event);
 	}
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	printf("gemm_nn_cl_sm: %f ms.\n", (end - start) * 1e-6f);
+	LOGD("gemm_nn_cl_sm: %f ms.\n", (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 
@@ -636,12 +636,12 @@ void gemm_nn_cl_tp(gemm_context *context, int m, int n, int k, float alpha, floa
 	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
 		local_work_size, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	printf("gemm_nn_cl_tp(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
+	LOGD("gemm_nn_cl_tp(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 	
@@ -787,12 +787,12 @@ void gemm_nn_cl_ion(gemm_context *context, int m, int n, int k, float alpha, flo
 	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 	
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	printf("gemm_nn_cl_ion: %f ms.\n", (end - start) * 1e-6f);
+	LOGD("gemm_nn_cl_ion: %f ms.\n", (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 	
@@ -928,12 +928,12 @@ void gemm_nt_cl(gemm_context *context, int m, int n, int k, float alpha, float *
 			global_work_size, NULL, 0, NULL, NULL);
 	}
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	printf("gemm_nt_cl: %f ms.\n", (end - start) * 1e-6f);
+	LOGD("gemm_nt_cl: %f ms.\n", (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 	

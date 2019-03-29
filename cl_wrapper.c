@@ -47,7 +47,7 @@ cl_wrapper cl_create_wrapper(cl_int *errcode)
 	if (!wrapper.context || CL_SUCCESS != *errcode) return wrapper;
 	
 	cl_command_queue_properties command_queue_properties = 0;
-#ifdef CL_PROFILING_ENABLE
+#ifdef NDEBUG
 	command_queue_properties = CL_QUEUE_PROFILING_ENABLE;
 #endif
 	

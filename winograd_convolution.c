@@ -27,9 +27,6 @@ struct weight_transform_context {
 	int filter_channels;
 	int nfilters;
 	int tile_input_size;
-	int transformed_weight_width;
-	int transformed_weight_height;
-	int transformed_weight_depth;
 	int weight_image_width;
 	int weight_image_height;
 	int transformed_weight_image_width;
@@ -150,9 +147,6 @@ weight_transform_context *create_weight_transform_context(WINOGRAD_CONV_TYPE con
 	}
 	
 	context->tile_input_size = get_image_tile_size(conv);
-	context->transformed_weight_width = ((filter_channels + 3) / 4) * 4;
-	context->transformed_weight_height = ((nfilters + 3) / 4) * 4;
-	context->transformed_weight_depth = context->tile_input_size * context->tile_input_size;
 	context->weight_image_width = (context->filter_size * context->filter_size) * ((filter_channels + 3) >> 2);
 	context->weight_image_height = nfilters;
 	context->input_channel_blocks = (context->filter_channels + 3) >> 2;
@@ -264,7 +258,7 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE
+#ifdef NDEBUG
 	static float total = 0;
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
@@ -272,7 +266,7 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	printf("GPU, weight_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
+	LOGD("GPU, weight_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
 #endif
 	clReleaseEvent(event);
 	
@@ -434,7 +428,7 @@ void transform_input(input_transform_context *context, float *transformed_input)
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	static float total = 0;
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
@@ -442,7 +436,7 @@ void transform_input(input_transform_context *context, float *transformed_input)
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	printf("GPU, input_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
+	LOGD("GPU, input_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
 #endif
 	clReleaseEvent(event);
 	
@@ -571,7 +565,7 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	static float total = 0;
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
@@ -579,9 +573,9 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	printf("36x([%dx%d]x[%dx%d])\n", context->wtc->transformed_weight_image_height, context->wtc->transformed_weight_image_width / 36,
+	LOGD("36x([%dx%d]x[%dx%d])\n", context->wtc->transformed_weight_image_height, context->wtc->transformed_weight_image_width / 36,
 		context->itc->transformed_input_image_height / 36, context->itc->transformed_input_image_width);
-	printf("GPU, matrix_multiply[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
+	LOGD("GPU, matrix_multiply[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
 #endif
 	clReleaseEvent(event);
 	
@@ -724,7 +718,7 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 	clEnqueueNDRangeKernel(wrapper.command_queue, context->kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 	
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	static float total = 0;
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
@@ -732,7 +726,7 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	printf("GPU, inverse_output_transform_f4x4_3x3[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
+	LOGD("GPU, inverse_output_transform_f4x4_3x3[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
 #endif
 	clReleaseEvent(event);	
 	

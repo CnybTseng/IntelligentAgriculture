@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
@@ -36,10 +37,6 @@ extern cl_wrapper wrapper;
 cl_ion_context create_ion_image(int width, int height);
 void set_ion_image_value(cl_ion_context ion_context, bitmap *bmp);
 #endif
-#endif
-
-#ifdef _WIN32
-void nanosleep(const struct timespec *rqtp, struct timespec *rmtp);
 #endif
 
 int main(int argc, char *argv[])
@@ -191,6 +188,7 @@ void *object_process_thread(void *param)
 
 void draw_bounding_box(bitmap *bmp, int x, int y, int w, int h)
 {
+	const int height = get_bmp_height(bmp);
 	const int pitch = get_bmp_pitch(bmp);
 	const int bit_count = get_bmp_bit_count(bmp);
 	unsigned char *data = get_bmp_data(bmp);
@@ -198,8 +196,8 @@ void draw_bounding_box(bitmap *bmp, int x, int y, int w, int h)
 	const int color[3] = {0, 255, 255};
 	const int left = x;
 	const int right = x + w - 1;
-	const int top = y;
-	const int bottom = y + h - 1;
+	const int bottom = height - 1 - y;
+	const int top = height - 1 - (y + h - 1);
 	
 	for (int c = 0; c < bpp; ++c) {
 		for (int y = top; y < bottom; ++y) {
@@ -321,11 +319,4 @@ void set_ion_image_value(cl_ion_context ion_context, bitmap *bmp)
 	clReleaseMemObject(d_image);
 }
 #endif
-#endif
-
-#ifdef _WIN32
-void nanosleep(const struct timespec *rqtp, struct timespec *rmtp)
-{
-	Sleep(rqtp->tv_nsec);
-}
 #endif

@@ -25,6 +25,7 @@ the terms of the BSD license (see the COPYING file).
 #include "image.h"
 #include "zutils.h"
 #include "cl_wrapper.h"
+#include "half.h"
 
 typedef int (*lock_method)(pthread_mutex_t *mutex);
 typedef int (*unlock_method)(pthread_mutex_t *mutex);
@@ -116,17 +117,11 @@ int ai_core_send_image(const char *const rgb24, size_t size)
 	if (core_param.frame_counter++ % core_param.sample_interval != 0) return AIC_FRAME_DISCARD;
 	void *standard_image = allocate_from_memory_pool();
 	if (!standard_image) return AIC_ALLOCATE_FAIL;
-#ifdef CL_PROFILING_ENABLE
-	struct timeval t1, t2; 
-    gettimeofday(&t1, NULL);
-#endif
+
  	standardize_image(core_param.standardizer, (unsigned char *)rgb24, core_param.image_width,
  		core_param.image_height, standard_image);
  	memcpy(core_param.image_queue_read_buffer, &standard_image, sizeof(void *));
-#ifdef CL_PROFILING_ENABLE
-	gettimeofday(&t2, NULL);
-	LOGD("CPU & GPU standardize_image: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
-#endif
+
 	int timer = 11;
 	const struct timespec req = {0, 100000};
 	const unsigned int request_size = roundup_power_of_2(sizeof(void *));
@@ -210,12 +205,10 @@ int ai_core_fetch_object(object_t *const object, size_t number, float threshold)
 			}
 		}
 		
-		int left    = (int)((det->bbox.x - det->bbox.w / 2) * core_param.image_width);		
-		int right   = (int)((det->bbox.x + det->bbox.w / 2) * core_param.image_width);
-		int _top    = (int)((det->bbox.y - det->bbox.h / 2) * core_param.image_height);
-		int _bottom = (int)((det->bbox.y + det->bbox.h / 2) * core_param.image_height);
-		int top = core_param.image_height - 1 - _bottom;
-		int bottom = core_param.image_height - 1 - _top;
+		int left = (int)((det->bbox.x - det->bbox.w / 2) * core_param.image_width);		
+		int right = (int)((det->bbox.x + det->bbox.w / 2) * core_param.image_width);
+		int top = (int)((det->bbox.y - det->bbox.h / 2) * core_param.image_height);
+		int bottom = (int)((det->bbox.y + det->bbox.h / 2) * core_param.image_height);
 		
 		if (left < 0) left = 0;
 		if (left > core_param.image_width - 1) left = core_param.image_width - 1;
@@ -697,15 +690,18 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 	size_t origin[] = {0, 0, 0};
 	size_t region[] = {width, height, 1};
 	size_t row_pitch, slice_pitch;
-	float *h_image = clEnqueueMapImage(wrapper.command_queue, image, CL_TRUE, CL_MAP_READ,
+	MEM_MAP_PTR_TYPE *h_image = clEnqueueMapImage(wrapper.command_queue, image, CL_TRUE, CL_MAP_READ,
 		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
 
-	row_pitch = row_pitch >> 2;
+	row_pitch = row_pitch / sizeof(MEM_MAP_PTR_TYPE);
 	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
-			rgb24[y * width * 3 + x * 3 + 2] = (unsigned char)(h_image[y * row_pitch + (x << 2) + 0] * 255);
-			rgb24[y * width * 3 + x * 3 + 1] = (unsigned char)(h_image[y * row_pitch + (x << 2) + 1] * 255);
-			rgb24[y * width * 3 + x * 3 + 0] = (unsigned char)(h_image[y * row_pitch + (x << 2) + 2] * 255);
+			float red = DEVICE_TO_HOST(h_image[y * row_pitch + (x << 2)]);
+			float green = DEVICE_TO_HOST(h_image[y * row_pitch + (x << 2) + 1]);
+			float blue = DEVICE_TO_HOST(h_image[y * row_pitch + (x << 2) + 2]);
+			rgb24[y * width * 3 + x * 3 + 2] = (unsigned char)(red * 255);
+			rgb24[y * width * 3 + x * 3 + 1] = (unsigned char)(green * 255);
+			rgb24[y * width * 3 + x * 3 + 0] = (unsigned char)(blue * 255);
 		}
 	}
 

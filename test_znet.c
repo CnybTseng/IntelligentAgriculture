@@ -1906,7 +1906,7 @@ void test_normalize_image_with_gpu(int argc, char *argv[])
 	clEnqueueNDRangeKernel(wrapper.command_queue, kernel, work_dim, NULL, global_work_size,
 		NULL, 0, NULL, &event);
 
-#ifdef CL_PROFILING_ENABLE	
+#ifdef NDEBUG	
 	cl_ulong start, end;
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
@@ -2201,14 +2201,17 @@ void test_image_standardizer(int argc, char *argv[])
 	size_t origin[] = {0, 0, 0};
 	size_t region[] = {standard_width, standard_height, 1};
 	size_t row_pitch, slice_pitch;
-	float *h_standard_image = clEnqueueMapImage(wrapper.command_queue, d_standard_image, CL_TRUE, CL_MAP_READ,
+	MEM_MAP_PTR_TYPE *h_standard_image = clEnqueueMapImage(wrapper.command_queue, d_standard_image, CL_TRUE, CL_MAP_READ,
 		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
-	row_pitch = row_pitch >> 2;
+	row_pitch = row_pitch / sizeof(MEM_MAP_PTR_TYPE);
 	for (int y = 0; y < standard_height; ++y) {
 		for (int x = 0; x < standard_width; ++x) {
-			standard_image_buffer[3 * (y * standard_width + x)]     = (unsigned char)(h_standard_image[y * row_pitch + (x << 2)] * 255);
-			standard_image_buffer[3 * (y * standard_width + x) + 1] = (unsigned char)(h_standard_image[y * row_pitch + (x << 2) + 1] * 255);
-			standard_image_buffer[3 * (y * standard_width + x) + 2] = (unsigned char)(h_standard_image[y * row_pitch + (x << 2) + 2] * 255);
+			float red = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << 2)]);
+			float green = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << 2) + 1]);
+			float blue = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << 2) + 2]);
+			standard_image_buffer[3 * (y * standard_width + x)]     = (unsigned char)(red * 255);
+			standard_image_buffer[3 * (y * standard_width + x) + 1] = (unsigned char)(green * 255);
+			standard_image_buffer[3 * (y * standard_width + x) + 2] = (unsigned char)(blue * 255);
 		}
 	}
 	clEnqueueUnmapMemObject(wrapper.command_queue, d_standard_image, h_standard_image, 0, NULL, &event);
@@ -2345,7 +2348,7 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[])
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-#if defined(NNPACK_PROFILE_ENABLE) || defined(CL_PROFILING_ENABLE)
+#ifdef NDEBUG
 		printf("------------------------------------------------------\n");
 #endif
 		znet_inference(net, standard_image);
