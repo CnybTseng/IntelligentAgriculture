@@ -48,8 +48,9 @@ AICORE_LOCAL void swap_channel(image *img);
 AICORE_LOCAL image_standardizer *create_image_standardizer(int width, int height, int standard_width, int standard_height, int nchannels);
 AICORE_LOCAL void *get_standardizer_output_ptr(image_standardizer *standardizer);
 AICORE_LOCAL void standardize_image(image_standardizer *standardizer, const unsigned char *const rgb24,
-	unsigned int width, unsigned int height, void *output);
-AICORE_LOCAL void standardize_ion_image(image_standardizer *standardizer, void *input, unsigned int width, unsigned int height, void *output);
+	unsigned int width, unsigned int height, int roix, int roiy, int roiw, int roih, void *output);
+AICORE_LOCAL void standardize_ion_image(image_standardizer *standardizer, void *input, unsigned int width,
+	unsigned int height, int roix, int roiy, int roiw, int roih, void *output);
 AICORE_LOCAL void free_image_standardizer(image_standardizer *standardizer);
 
 #ifdef __cplusplus

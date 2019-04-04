@@ -66,6 +66,9 @@ int main(int argc, char *argv[])
 	int delay = 30000000;	// 30ms
 	if (argc > 2) delay = atoi(argv[3]);
 	const struct timespec req = {0, delay};
+	double duration = 0;
+	struct timeval t1, t2;
+	
 	while (!quit) {
 		// 检测是否按下'q'键想退出测试程序
 #ifdef __linux__
@@ -81,12 +84,12 @@ int main(int argc, char *argv[])
 			}
 		}
 		
-		sprintf(filename, "dataset/%04d.bmp", counter++);
+		sprintf(filename, "dataset/%04d.bmp", counter);
 		bitmap *bmp = read_bmp(filename);
 		if (!bmp) {
-			fprintf(stderr, "read_bmp fail[%s:%d].\n", __FILE__, __LINE__);
-			quit = 1;
-			break;
+			fprintf(stderr, "read_bmp fail[%s:%d:%s], restart.\n", __FILE__, __LINE__, filename);
+			counter = 0;
+			continue;
 		}
 		
 		const int width = get_bmp_width(bmp);
@@ -105,7 +108,16 @@ int main(int argc, char *argv[])
 			if (ret == AIC_FRAME_DISCARD) fprintf(stderr, "ai_core_send_image: discard!\n");	// 抽帧检测
 			else fprintf(stderr, "ai_core_send_image fail! error code %d.\n", ret);
 		}
-	
+		
+		if (0 == counter) {
+			gettimeofday(&t1, NULL);
+		} else {
+			gettimeofday(&t2, NULL);
+			duration = ((double)t2.tv_sec - t1.tv_sec) + (t2.tv_usec - t1.tv_usec) / 1000000.0;
+			printf("send frame rate %ffps.\n", counter / duration);
+		}
+		
+		++counter;
 		if (bmp) delete_bmp(bmp);
 		nanosleep(&req, NULL);
 	}
@@ -142,32 +154,37 @@ int create_object_process_thread(pthread_t *tid)
 
 void *object_process_thread(void *param)
 {
-	float threshold = 0.5f;
+	float threshold = 0.25f;
 	const struct timespec req = {0, 1000000};
 	object_t object;
 	int counter = 0;
 	char filename[128];
 	double duration = 0;
 	struct timeval t1, t2;
-	gettimeofday(&t1, NULL);
+	double frame_rate = 0;
 	
 	while (!quit) {
 		int ret = ai_core_fetch_object(&object, 1, threshold);
 		if (ret < 0) {
-			nanosleep(&req, NULL);
 			continue;
+		}
+		
+		if (0 == counter) {
+			gettimeofday(&t1, NULL);
+		} else {
+			gettimeofday(&t2, NULL);
+			duration = ((double)t2.tv_sec - t1.tv_sec) + (t2.tv_usec - t1.tv_usec) / 1000000.0;
+			frame_rate = counter / duration;
 		}
 		
 		sprintf(filename, "dataset/%04d.bmp", counter);
 		bitmap *bmp = read_bmp(filename);
 		if (!bmp) {
-			fprintf(stderr, "read_bmp fail[%s:%d].\n", __FILE__, __LINE__);
-			break;
+			fprintf(stderr, "read_bmp fail[%s:%d:%s], restart.\n", __FILE__, __LINE__, filename);
+			counter = 0;
+			continue;
 		}
 
-		gettimeofday(&t2, NULL);
-		duration = ((double)t2.tv_sec - t1.tv_sec) + (t2.tv_usec - t1.tv_usec) / 1000000.0;
-		++counter;
 		if (ret > 0) {
 			printf("detected object[%d,%d,%d,%d;%f,%f],", object.x, object.y, object.w, object.h,
 				object.objectness, object.probability);
@@ -176,9 +193,10 @@ void *object_process_thread(void *param)
 			printf("no object,");
 		}
 		
-		printf("frame rate %ffps.\n", counter / duration);
-		sprintf(filename, "detection/%04d.bmp", counter - 1);
+		printf("display frame rate %ffps.\n", frame_rate);
+		sprintf(filename, "detection/%04d.bmp", counter);
 		save_bmp(bmp, filename);
+		++counter;
 		if (bmp) delete_bmp(bmp);
 		nanosleep(&req, NULL);
 	}
@@ -198,16 +216,21 @@ void draw_bounding_box(bitmap *bmp, int x, int y, int w, int h)
 	const int right = x + w - 1;
 	const int bottom = height - 1 - y;
 	const int top = height - 1 - (y + h - 1);
+	const int lw = 3;
 	
 	for (int c = 0; c < bpp; ++c) {
 		for (int y = top; y < bottom; ++y) {
-			data[y * pitch + left * bpp + c] = color[c];
-			data[y * pitch + right * bpp + c] = color[c];
+			for (int l = 0; l < lw; ++l) {
+				data[y * pitch + (left + l) * bpp + c] = color[c];
+				data[y * pitch + (right - l) * bpp + c] = color[c];
+			}
 		}
 		
 		for (int x = left; x < right; ++x) {
-			data[top * pitch + x * bpp + c] = color[c];
-			data[bottom * pitch + x * bpp + c] = color[c];
+			for (int l = 0; l < lw; ++l) {
+				data[(top + l) * pitch + x * bpp + c] = color[c];
+				data[(bottom - l) * pitch + x * bpp + c] = color[c];
+			}
 		}
 	}
 }

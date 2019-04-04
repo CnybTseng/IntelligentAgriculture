@@ -42,10 +42,11 @@ extern char BINARY_FILENAME_TO_START(utils, cl);
 extern char BINARY_FILENAME_TO_END(utils, cl);
 #endif
 
+extern void set_fill_color(float (*color)[4], int nchannels);
 test_image load_test_image(int argc, char *argv[], int std_width, int std_height);
-void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh);
+void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh,
+	int roix, int roiy, int roiw, int roih);
 void test_multi_free(int argc, char *argv[]);
-void test_yolov3_tiny(int argc, char *argv[]);
 void test_im2col(int argc, char *argv[]);
 void test_gemm(int argc, char *argv[]);
 void test_activate(int argc, char *argv[]);
@@ -77,9 +78,11 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[]);
 void test_ion_image_standardizer(int argc, char *argv[]);
 void test_half(int argc, char *argv[]);
 void test_read_half_value_from_float_image(int argc, char *argv[]);
+void test_set_color(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
+	system("rm -f *.cl.bin");
 	test_yolov3_tiny_with_cpu_or_gpu(argc, argv);
 	
 	return 0;
@@ -150,7 +153,8 @@ test_image load_test_image(int argc, char *argv[], int std_width, int std_height
 	return ti;
 }
 
-void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh)
+void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh,
+	int roix, int roiy, int roiw, int roih)
 {
 	int width = get_bmp_width(bmp);
 	int height = get_bmp_height(bmp);
@@ -160,6 +164,7 @@ void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh)
 	int nchannels = bit_count >> 3;
 	node *n = detections->head;
 	int color[3] = {0, 255, 255};
+	const int lw = 3;
 	while (n) {
 		detection *det = (detection *)n->val;
 		if (det->objectness < thresh) {
@@ -177,10 +182,10 @@ void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh)
 		}
 		
 		if (maybe) printf("\n");
-		int left    = (int)((det->bbox.x - det->bbox.w / 2) * width);		
-		int right   = (int)((det->bbox.x + det->bbox.w / 2) * width);
-		int _top    = (int)((det->bbox.y - det->bbox.h / 2) * height);
-		int _bottom = (int)((det->bbox.y + det->bbox.h / 2) * height);
+		int left    = (int)((det->bbox.x - det->bbox.w / 2) * roiw) + roix;		
+		int right   = (int)((det->bbox.x + det->bbox.w / 2) * roiw) + roix;
+		int _top    = (int)((det->bbox.y - det->bbox.h / 2) * roih) + roiy;
+		int _bottom = (int)((det->bbox.y + det->bbox.h / 2) * roih) + roiy;
 		int top = height - 1 - _bottom;
 		int bottom = height - 1 - _top;
 		
@@ -195,13 +200,17 @@ void draw_detections(bitmap *bmp, list *detections, char *names[], float thresh)
 		
 		for (int c = 0; c < nchannels; ++c) {
 			for (int y = top; y < bottom; ++y) {
-				data[y * pitch + left * nchannels + c] = color[c];
-				data[y * pitch + right * nchannels + c] = color[c];
+				for (int l = 0; l < lw; ++l) {
+					data[y * pitch + (left + l) * nchannels + c] = color[c];
+					data[y * pitch + (right - l) * nchannels + c] = color[c];
+				}
 			}
 			
 			for (int x = left; x < right; ++x) {
-				data[top * pitch + x * nchannels + c] = color[c];
-				data[bottom * pitch + x * nchannels + c] = color[c];
+				for (int l = 0; l < lw; ++l) {
+					data[(top + l) * pitch + x * nchannels + c] = color[c];
+					data[(bottom - l) * pitch + x * nchannels + c] = color[c];
+				}
 			}
 		}
 		
@@ -227,162 +236,6 @@ void test_multi_free(int argc, char *argv[])
 	}
 	
 	mmfree(3, buf1, buf2, buf3);
-}
-
-void test_yolov3_tiny(int argc, char *argv[])
-{	
-	if (argc < 2) {
-		fprintf(stderr, "Usage: detector [bitmap filename] [thresh]\n");
-		return;
-	}
-
-#ifdef OPENCL
-	cl_int errcode;
-	wrapper = cl_create_wrapper(&errcode);
-	if (CL_SUCCESS != errcode) {
-		fprintf(stderr, "cl_create_wrapper[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
-		return;
-	}
-	
-	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_WIDTH);
-	cl_print_device_info(wrapper, CL_DEVICE_IMAGE2D_MAX_HEIGHT);
-#endif	
-	
-	void *layers[24];
-	int nlayers = sizeof(layers) / sizeof(layers[0]);
-	dim3 output_size;
-	
-	int bigger_mask[] = {3, 4, 5};
-	int smaller_mask[] = {0, 1, 2};
-	int anchor_boxes[] = {61,117, 62,191, 199,118, 128,195, 92,293, 191,291};
-	const int scales = 3;
-	const int classes = 1;
-	const int object_tensor_depth = (4 + 1 + classes) * scales;
-	
-	dim3 input_size = {416, 416, 3};
-	layers[0] = make_convolutional_layer(LEAKY, input_size, 3, 16, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[1] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[2] = make_convolutional_layer(LEAKY, input_size, 3, 32, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[3] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[4] = make_convolutional_layer(LEAKY, input_size, 3, 64, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[5] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[6] = make_convolutional_layer(LEAKY, input_size, 3, 128, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[7] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[8] = make_convolutional_layer(LEAKY, input_size, 3, 256, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[9] = make_maxpool_layer(input_size, 2, 2, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[10] = make_convolutional_layer(LEAKY, input_size, 3, 512, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[11] = make_maxpool_layer(input_size, 2, 1, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[12] = make_convolutional_layer(LEAKY, input_size, 3, 1024, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[13] = make_convolutional_layer(LEAKY, input_size, 1, 256, 1, 0, 1, 1, &output_size);
-	input_size = output_size;
-	layers[14] = make_convolutional_layer(LEAKY, input_size, 3, 512, 1, 1, 1, 1, &output_size);
-	input_size = output_size;
-	layers[15] = make_convolutional_layer(LINEAR, input_size, 1, object_tensor_depth, 1, 0, 1, 0, &output_size);
-	
-	input_size = output_size;
-	layers[16] = make_yolo_layer(input_size, 1, 3, 6, classes, bigger_mask, anchor_boxes);
-	
-	int layer_ids1[] = {13};
-	void *routes1[] = {layers[13]};
-	layers[17] = make_route_layer(1, 1, routes1, layer_ids1, &output_size);
-	
-	input_size = output_size;
-	layers[18] = make_convolutional_layer(LEAKY, input_size, 1, 128, 1, 0, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[19] = make_resample_layer(input_size, 1, 2, &output_size);
-	
-	int layer_ids2[] = {19, 8};
-	void *routes2[] = {layers[19], layers[8]};
-	layers[20] = make_route_layer(1, 2, routes2, layer_ids2, &output_size);
-	
-	input_size = output_size;
-	layers[21] = make_convolutional_layer(LEAKY, input_size, 3, 256, 1, 1, 1, 1, &output_size);
-	
-	input_size = output_size;
-	layers[22] = make_convolutional_layer(LINEAR, input_size, 1, object_tensor_depth, 1, 0, 1, 0, &output_size);
-	
-	input_size = output_size;
-	layers[23] = make_yolo_layer(input_size, 1, 3, 6, classes, smaller_mask, anchor_boxes);
-	
-	znet *net = znet_create(layers, nlayers, "agriculture.weights");
-	if (!net) return;
-	
-	znet_architecture(net);
-	
-	test_image ti = load_test_image(argc, argv, 416, 416);
-	if (!ti.original || !ti.standard) {
-		znet_destroy(net);
-		return;
-	}
-		
-	bitmap *original = ti.original;
-	image *standard = ti.standard;
-	
-	unsigned char *red = calloc(standard->w * standard->h, sizeof(unsigned char));
-	for (int i = 0; i < standard->w * standard->h; ++i)
-		red[i] = (unsigned char)(standard->data[i] * 255);
-	bitmap *red_bmp = create_bmp((const char *)red, standard->w, standard->h, 8);
-	save_bmp(red_bmp, "standard.bmp");
-	delete_bmp(red_bmp);
-	free(red);
-	
-	int N = 1;
-	if (argc > 3) N = atoi(argv[3]);
-	printf("inference iterations %d\n", N);
-
-#ifdef NNPACK	
-	znet_inference(net, standard->data);
-#endif	
-	
-	struct timeval t1, t2; 
-    gettimeofday(&t1, NULL);
-	for (int i = 0; i < N; ++i) {
-		printf("------------------------------------------------------\n");
-		znet_inference(net, standard->data);
-	}
-	gettimeofday(&t2, NULL);
-	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
-	
-	float thresh = 0.5f;
-	if (argc > 2) thresh = atof(argv[2]);
-	
-	int width = get_bmp_width(original);
-	int height = get_bmp_height(original);
-	
-	list *detections = get_detections(net, thresh, width, height);	
-	list *bests = soft_nms(detections, 2.5);
-	
-	draw_detections(original, bests, names, thresh);
-	save_bmp(original, "detections.bmp");
-	
-	free_detections(bests);
-	free_detections(detections);
-	delete_bmp(original);
-	free_image(standard);
-	znet_destroy(net);
-#ifdef OPENCL
-	cl_destroy_wrapper(wrapper);
-#endif
 }
 
 void test_im2col(int argc, char *argv[])
@@ -2186,7 +2039,7 @@ void test_image_standardizer(int argc, char *argv[])
 	struct timeval t1, t2; 
     gettimeofday(&t1, NULL);
 	for (int i = 0; i < N; ++i) {
-		standardize_image(standardizer, data, width, height, d_standard_image);
+		standardize_image(standardizer, data, width, height, 0, 0, width, height, d_standard_image);
 	}
 	gettimeofday(&t2, NULL);
 	printf("time: %f ms.\n", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
@@ -2204,11 +2057,18 @@ void test_image_standardizer(int argc, char *argv[])
 	MEM_MAP_PTR_TYPE *h_standard_image = clEnqueueMapImage(wrapper.command_queue, d_standard_image, CL_TRUE, CL_MAP_READ,
 		origin, region, &row_pitch, &slice_pitch, 0, NULL, NULL, &errcode);
 	row_pitch = row_pitch / sizeof(MEM_MAP_PTR_TYPE);
+#ifndef CHANNEL_BLOCK_SIZE8
+	printf("channel block size 4!\n");
+	const int shift = 2;
+#else
+	printf("channel block size 8!\n");
+	const int shift = 3;
+#endif
 	for (int y = 0; y < standard_height; ++y) {
 		for (int x = 0; x < standard_width; ++x) {
-			float red = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << 2)]);
-			float green = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << 2) + 1]);
-			float blue = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << 2) + 2]);
+			float red = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << shift)]);
+			float green = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << shift) + 1]);
+			float blue = DEVICE_TO_HOST(h_standard_image[y * row_pitch + (x << shift) + 2]);
 			standard_image_buffer[3 * (y * standard_width + x)]     = (unsigned char)(red * 255);
 			standard_image_buffer[3 * (y * standard_width + x) + 1] = (unsigned char)(green * 255);
 			standard_image_buffer[3 * (y * standard_width + x) + 2] = (unsigned char)(blue * 255);
@@ -2252,12 +2112,16 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[])
 	const unsigned char *data = get_bmp_data(bmp);
 	const int standard_width = 416;
 	const int standard_height = 416;
+	const int roiw = 1000;
+	const int roih = 1000;
+	const int roix = (width - roiw) >> 1;
+	const int roiy = (height - roih) >> 1;
 	
 	standardizer = create_image_standardizer(width, height, standard_width, standard_height, 3);
 	if (!standardizer) goto cleanup;
 	
 	void *standard_image = get_standardizer_output_ptr(standardizer);
-	standardize_image(standardizer, data, width, height, standard_image);
+	standardize_image(standardizer, data, width, height, roix, roiy, roiw, roih, standard_image);
 
 	void *layers[24];
 	int nlayers = sizeof(layers) / sizeof(layers[0]);
@@ -2359,10 +2223,10 @@ void test_yolov3_tiny_with_cpu_or_gpu(int argc, char *argv[])
 	float thresh = 0.5f;
 	if (argc > 2) thresh = atof(argv[2]);
 	
-	list *detections = get_detections(net, thresh, width, height);	
+	list *detections = get_detections(net, thresh, roiw, roih);	
 	list *bests = soft_nms(detections, 2.5);
 
-	draw_detections(bmp, bests, names, thresh);
+	draw_detections(bmp, bests, names, thresh, roix, roiy, roiw, roih);
 	save_bmp(bmp, "detections.bmp");
 	
 	free_detections(bests);
@@ -2400,7 +2264,7 @@ void test_ion_image_standardizer(int argc, char *argv[])
 
 	unsigned char *data = get_bmp_data(bmp);
 	float *output = calloc(standard_width * standard_height * 3, sizeof(float));
-	standardize_image(standardizer, data, width, height, output);
+	standardize_image(standardizer, data, width, height, 0, 0, width, height, output);
 
 	red = calloc(standard_width * standard_height, sizeof(unsigned char));
 	
@@ -2603,4 +2467,20 @@ void test_read_half_value_from_float_image(int argc, char *argv[])
 	clReleaseKernel(kernel);
 	cl_destroy_wrapper(wrapper);
 #endif	
+}
+
+void test_set_color(int argc, char *argv[])
+{
+	enum {nchannels = 4};
+	float color[nchannels];
+	// set_fill_color(&color, nchannels);
+#ifndef CHANNEL_BLOCK_SIZE8
+	for (int i = 0; i < nchannels; ++i) printf("%f ", color[i]);
+	printf("\n");
+#else
+	const int half_channels = nchannels << 1;
+	cl_half *ptr = (cl_half *)color;
+	for (int i = 0; i < half_channels; ++i) printf("%f ", to_float(ptr[i]));
+	printf("\n");
+#endif
 }

@@ -10,6 +10,7 @@
 #ifdef OPENCL
 #	include "cl_wrapper.h"
 #endif
+#include "half.h"
 
 #ifdef OPENCL
 extern cl_wrapper wrapper;
@@ -38,6 +39,10 @@ struct image_standardizer {
 	image *output;
 	float scale;
 };
+
+static void get_standardizer_parameter(int width, int height, int standard_width, int standard_height,
+	int *resized_width, int *resized_height, float *scale);
+static void set_fill_color(float (*color)[4], int nchannels);
 
 image *create_image(int width, int height, int nchannels)
 {
@@ -664,6 +669,33 @@ void swap_channel(image *img)
 	}
 }
 
+void get_standardizer_parameter(int width, int height, int standard_width, int standard_height,
+	int *resized_width, int *resized_height, float *scale)
+{
+	if (standard_width / (float)width < standard_height / (float)height) {
+		*resized_width = standard_width;
+		*resized_height = (int)(height * standard_width / (float)width);
+		*scale = width / (float)standard_width;
+	} else {
+		*resized_width = (int)(width * standard_height / (float)height);
+		*resized_height = standard_height;
+		*scale = height / (float)standard_height;
+	}
+}
+
+void set_fill_color(float (*color)[4], int nchannels)
+{
+#ifndef CHANNEL_BLOCK_SIZE8
+	for (int i = 0; i < 3; ++i) (*color)[i] = 0.5f;
+	for (int i = 3; i < nchannels; ++i) (*color)[i] = 0;
+#else
+	const int half_channels = nchannels << 1;
+	cl_half *ptr = (cl_half *)(*color);
+	for (int i = 0; i < 3; ++i) ptr[i] = to_half(0.5);
+	for (int i = 3; i < half_channels; ++i) ptr[i] = 0;
+#endif
+}
+
 image_standardizer *create_image_standardizer(int width, int height, int standard_width, int standard_height, int nchannels)
 {
 	image_standardizer *standardizer = calloc(1, sizeof(image_standardizer));
@@ -677,15 +709,9 @@ image_standardizer *create_image_standardizer(int width, int height, int standar
 	standardizer->standard_width = standard_width;
 	standardizer->standard_height = standard_height;
 
-	if (standard_width / (float)width < standard_height / (float)height) {
-		standardizer->resized_width = standard_width;
-		standardizer->resized_height = (int)(height * standard_width / (float)width);
-		standardizer->scale = width / (float)standard_width;
-	} else {
-		standardizer->resized_width = (int)(width * standard_height / (float)height);
-		standardizer->resized_height = standard_height;
-		standardizer->scale = height / (float)standard_height;
-	}
+	get_standardizer_parameter(width, height, standard_width, standard_height, &standardizer->resized_width,
+		&standardizer->resized_height, &standardizer->scale);
+
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
 	cl_mem_flags mem_flags = CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR;
 	cl_image_format image_format = {
@@ -753,7 +779,8 @@ image_standardizer *create_image_standardizer(int width, int height, int standar
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
 	size_t origin[] = {0, 0, 0};
 	size_t region[] = {standardizer->standard_width, standardizer->standard_height, 1};
-	float fill_color[] = {0.5f, 0.5f, 0.5f, 0};
+	float fill_color[4];
+	set_fill_color(&fill_color, 4);
 	cl_mem standard_image = standardizer->output->d_data;
 	errcode = clEnqueueFillImage(wrapper.command_queue, standard_image, fill_color, origin, region, 0, NULL, NULL);
 	if (CL_SUCCESS != errcode) {
@@ -775,7 +802,7 @@ void *get_standardizer_output_ptr(image_standardizer *standardizer)
 }
 
 void standardize_image(image_standardizer *standardizer, const unsigned char *const rgb24,
-	unsigned int width, unsigned int height, void *output)
+	unsigned int width, unsigned int height, int roix, int roiy, int roiw, int roih, void *output)
 {
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
 	cl_int errcode;
@@ -796,12 +823,17 @@ void standardize_image(image_standardizer *standardizer, const unsigned char *co
 	
 	clEnqueueUnmapMemObject(wrapper.command_queue, standardizer->d_input, h_input, 0, NULL, NULL);
 
+	get_standardizer_parameter(roiw, roih, standardizer->standard_width, standardizer->standard_height,
+		&standardizer->resized_width, &standardizer->resized_height, &standardizer->scale);
+	
 	cl_mem standard_image = output;
 	errcode  = clSetKernelArg(standardizer->kernel, 0, sizeof(cl_mem), &standardizer->d_input);
 	errcode |= clSetKernelArg(standardizer->kernel, 1, sizeof(cl_mem), &standard_image);
 	errcode |= clSetKernelArg(standardizer->kernel, 2, sizeof(int), &standardizer->resized_width);
 	errcode |= clSetKernelArg(standardizer->kernel, 3, sizeof(int), &standardizer->resized_height);
 	errcode |= clSetKernelArg(standardizer->kernel, 4, sizeof(float), &standardizer->scale);
+	errcode |= clSetKernelArg(standardizer->kernel, 5, sizeof(int), &roix);
+	errcode |= clSetKernelArg(standardizer->kernel, 6, sizeof(int), &roiy);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 	}
@@ -830,9 +862,13 @@ void standardize_image(image_standardizer *standardizer, const unsigned char *co
 #endif		
 }
 
-void standardize_ion_image(image_standardizer *standardizer, void *input, unsigned int width, unsigned int height, void *output)
+void standardize_ion_image(image_standardizer *standardizer, void *input, unsigned int width,
+	unsigned int height, int roix, int roiy, int roiw, int roih, void *output)
 {
 #if defined(OPENCL) && defined(WINOGRAD_CONVOLUTION)
+	get_standardizer_parameter(roiw, roih, standardizer->standard_width, standardizer->standard_height,
+		&standardizer->resized_width, &standardizer->resized_height, &standardizer->scale);
+
 	cl_int errcode;
 	cl_mem d_input = input;
 	cl_mem standard_image = output;
@@ -841,6 +877,8 @@ void standardize_ion_image(image_standardizer *standardizer, void *input, unsign
 	errcode |= clSetKernelArg(standardizer->kernel, 2, sizeof(int), &standardizer->resized_width);
 	errcode |= clSetKernelArg(standardizer->kernel, 3, sizeof(int), &standardizer->resized_height);
 	errcode |= clSetKernelArg(standardizer->kernel, 4, sizeof(float), &standardizer->scale);
+	errcode |= clSetKernelArg(standardizer->kernel, 5, sizeof(int), &roix);
+	errcode |= clSetKernelArg(standardizer->kernel, 6, sizeof(int), &roiy);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 	}

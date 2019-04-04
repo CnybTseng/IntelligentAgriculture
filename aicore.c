@@ -46,6 +46,10 @@ typedef struct {
 typedef struct {
 	int image_width;
 	int image_height;
+	int roix;
+	int roiy;
+	int roiw;
+	int roih;
 	int standard_width;
 	int standard_height;
 	int cache_num;
@@ -106,6 +110,10 @@ int ai_core_init(unsigned int width, unsigned int height)
 #endif	
 	core_param.image_width = width;
 	core_param.image_height = height;
+	core_param.roiw = 1000;
+	core_param.roih = 1000;
+	core_param.roix = (core_param.image_width - core_param.roiw) >> 1;
+	core_param.roiy = (core_param.image_height - core_param.roih) >> 1;
 	pthread_once(&core_create_once_control, &ai_core_init_routine);
 	system("rm -f *.cl.bin");
 	
@@ -119,7 +127,7 @@ int ai_core_send_image(const char *const rgb24, size_t size)
 	if (!standard_image) return AIC_ALLOCATE_FAIL;
 
  	standardize_image(core_param.standardizer, (unsigned char *)rgb24, core_param.image_width,
- 		core_param.image_height, standard_image);
+ 		core_param.image_height, core_param.roix, core_param.roiy, core_param.roiw, core_param.roih, standard_image);
  	memcpy(core_param.image_queue_read_buffer, &standard_image, sizeof(void *));
 
 	int timer = 11;
@@ -149,7 +157,8 @@ int ai_core_send_ion_image(int ion_filedesc, void *const ion_hostptr, int width,
 	void *standard_image = allocate_from_memory_pool();
 	if (!standard_image) return AIC_ALLOCATE_FAIL;
 
- 	standardize_ion_image(core_param.standardizer, input, width, height, standard_image);
+ 	standardize_ion_image(core_param.standardizer, input, width, height, core_param.roix, core_param.roiy,
+		core_param.roiw, core_param.roih, standard_image);
 	clReleaseMemObject(input);
  	memcpy(core_param.image_queue_read_buffer, &standard_image, sizeof(void *));
 
@@ -205,10 +214,10 @@ int ai_core_fetch_object(object_t *const object, size_t number, float threshold)
 			}
 		}
 		
-		int left = (int)((det->bbox.x - det->bbox.w / 2) * core_param.image_width);		
-		int right = (int)((det->bbox.x + det->bbox.w / 2) * core_param.image_width);
-		int top = (int)((det->bbox.y - det->bbox.h / 2) * core_param.image_height);
-		int bottom = (int)((det->bbox.y + det->bbox.h / 2) * core_param.image_height);
+		int left = (int)((det->bbox.x - det->bbox.w / 2) * core_param.roiw + core_param.roix);		
+		int right = (int)((det->bbox.x + det->bbox.w / 2) * core_param.roiw + core_param.roix);
+		int top = (int)((det->bbox.y - det->bbox.h / 2) * core_param.roih + core_param.roiy);
+		int bottom = (int)((det->bbox.y + det->bbox.h / 2) * core_param.roih + core_param.roiy);
 		
 		if (left < 0) left = 0;
 		if (left > core_param.image_width - 1) left = core_param.image_width - 1;
@@ -475,7 +484,7 @@ void *dnn_inference_thread(void *param)
 	void *standard_image = NULL;
 	const unsigned int request_read = roundup_power_of_2(sizeof(void *));
 	const unsigned int request_write = roundup_power_of_2(sizeof(list *));
-	const struct timespec req = {0, 1000};
+	const struct timespec req = {0, 1000000};
 	while (core_param.thread_status == THREAD_RUNNING) {
 		unsigned int read_size = fifo_get(core_param.image_queue, core_param.image_queue_write_buffer, request_read);
 		if (read_size != request_read) {
@@ -487,7 +496,7 @@ void *dnn_inference_thread(void *param)
 		znet_inference(core_param.net, standard_image);
 		back_to_memory_pool(standard_image);
 		
-		list *detections = get_detections(core_param.net, core_param.threshold, core_param.image_width, core_param.image_height);	
+		list *detections = get_detections(core_param.net, core_param.threshold, core_param.roiw, core_param.roih);	
 		list *bests = soft_nms(detections, 2.5);
 		
 		memcpy(core_param.object_queue_read_buffer, &bests, sizeof(list *));
@@ -675,8 +684,9 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 		red[i] = (unsigned char)(((float *)image)[i] * 255);
 	}
 	
-	bitmap *bmp = create_bmp((const char *)red, width, height, 8);
-	save_bmp(bmp, "standard.bmp");
+	const int bits_per_pixel = 8;
+	bitmap *bmp = create_bmp((const char *)red, width, height, bits_per_pixel);
+	save_bmp(bmp, filename);
 	free(red);
 	delete_bmp(bmp);
 #else
@@ -707,8 +717,9 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 
 	clEnqueueUnmapMemObject(wrapper.command_queue, image, h_image, 0, NULL, NULL);
 	
-	bitmap *bmp = create_bmp((const char *)rgb24, width, height, 24);
-	save_bmp(bmp, "standard.bmp");
+	const int bits_per_pixel = 24;
+	bitmap *bmp = create_bmp((const char *)rgb24, width, height, bits_per_pixel);
+	save_bmp(bmp, filename);
 	free(rgb24);
 	delete_bmp(bmp);
 #endif
