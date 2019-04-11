@@ -15,8 +15,8 @@ typedef struct {
 
 typedef struct {
 	unsigned int   size;
-	unsigned long  width;
-	unsigned long  height;
+	unsigned int   width;
+	unsigned int   height;
 	unsigned short planes;
 	unsigned short bit_count;
 	unsigned int   compression;

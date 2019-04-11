@@ -56,7 +56,7 @@ typedef enum {
 } class_t;
 
 /** @typedef struct object_t
- ** @brief 物体的结构构体定义.
+ ** @brief 物体的结构体定义.
  **/
 typedef struct {
 	int x;				// 物体左上角横坐标.

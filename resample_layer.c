@@ -263,9 +263,9 @@ void forward_resample_layer_gpu(resample_layer *layer)
 	resample_context *context = layer->rc;
 	errcode  = clSetKernelArg(context->kernel, 0, sizeof(cl_mem), &context->d_input);
 	errcode |= clSetKernelArg(context->kernel, 1, sizeof(cl_mem), &context->d_output);
-	errcode |= clSetKernelArg(context->kernel, 2, sizeof(cl_mem), &context->stride);
-	errcode |= clSetKernelArg(context->kernel, 3, sizeof(cl_mem), &layer->input_size.w);
-	errcode |= clSetKernelArg(context->kernel, 4, sizeof(cl_mem), &layer->output_size.w);
+	errcode |= clSetKernelArg(context->kernel, 2, sizeof(int), &context->stride);
+	errcode |= clSetKernelArg(context->kernel, 3, sizeof(int), &layer->input_size.w);
+	errcode |= clSetKernelArg(context->kernel, 4, sizeof(int), &layer->output_size.w);
 	if (CL_SUCCESS != errcode) {
 		fprintf(stderr, "clSetKernelArg fail[%s:%d:%d].\n", __FILE__, __LINE__, errcode);
 		return;

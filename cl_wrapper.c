@@ -124,27 +124,27 @@ void cl_print_device_info(cl_wrapper wrapper, cl_device_info param_name)
 	case CL_DEVICE_IMAGE2D_MAX_WIDTH: {
 		size_t image2d_max_width;
 		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE2D_MAX_WIDTH, sizeof(size_t), &image2d_max_width, NULL);
-		printf("image2d_max_width: %d\n", image2d_max_width);
+		printf("image2d_max_width: %d\n", (int)image2d_max_width);
 	}	break;
 	case CL_DEVICE_IMAGE2D_MAX_HEIGHT: {
 		size_t image2d_max_height;
 		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE2D_MAX_HEIGHT, sizeof(size_t), &image2d_max_height, NULL);
-		printf("image2d_max_height: %d\n", image2d_max_height);
+		printf("image2d_max_height: %d\n", (int)image2d_max_height);
 	}	break;
 	case CL_DEVICE_IMAGE3D_MAX_WIDTH: {
 		size_t image3d_max_width;
 		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_WIDTH, sizeof(size_t), &image3d_max_width, NULL);
-		printf("image3d_max_width: %d\n", image3d_max_width);
+		printf("image3d_max_width: %d\n", (int)image3d_max_width);
 	} 	break;
 	case CL_DEVICE_IMAGE3D_MAX_HEIGHT: {
 		size_t image3d_max_height;
 		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_HEIGHT, sizeof(size_t), &image3d_max_height, NULL);
-		printf("image3d_max_height: %d\n", image3d_max_height);
+		printf("image3d_max_height: %d\n", (int)image3d_max_height);
 	} 	break;
 	case CL_DEVICE_IMAGE3D_MAX_DEPTH: {
 		size_t image3d_max_depth;
 		clGetDeviceInfo(wrapper.device, CL_DEVICE_IMAGE3D_MAX_DEPTH, sizeof(size_t), &image3d_max_depth, NULL);
-		printf("image3d_max_depth: %d\n", image3d_max_depth);
+		printf("image3d_max_depth: %d\n", (int)image3d_max_depth);
 	} 	break;
 	case CL_DEVICE_EXTENSIONS: {
 		char extensions[1024] = {'\0'};
