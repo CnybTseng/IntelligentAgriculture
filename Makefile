@@ -4,6 +4,7 @@ WINOGRAD?=1
 HALF?=1
 NNPACK?=0
 CLBLAST=0
+BMP?=0
 DEBUG?=0
 
 RM=rm -f
@@ -113,10 +114,10 @@ ifeq ($(GPU),1)
 		CFLAGS+= -DUSE_FLOAT
 	endif
 	ifeq ($(ARCH),arm)
-		CFLAGS+= -DION
+		CFLAGS+= -D_ION
 	endif
 	ifeq ($(ARCH),arm64)
-		CFLAGS+= -DION
+		CFLAGS+= -D_ION
 	endif
 else ifeq ($(NNPACK),1)
 	CFLAGS+= -DNNPACK
@@ -127,6 +128,9 @@ else ifeq ($(ARCH),arm)
 	CFLAGS+= -march=armv7-a -mfloat-abi=softfp -mfpu=neon -std=c99 -D__ANDROID_API__=24 -pie -fPIE
 else ifeq ($(ARCH),arm64)
 	CFLAGS+= -march=armv8-a -std=c99 -D__ANDROID_API__=24 -pie -fPIE
+endif
+ifeq ($(BMP),1)
+	CFLAGS+= -DUSE_BMP
 endif
 ifeq ($(DEBUG),1)
 	CFLAGS+= -DNDEBUG
@@ -184,7 +188,7 @@ $(SLIB): $(OBJS) agriculture.o cl_common.o $(CLOBJS)
 ifeq ($(ARCH),arm)
 	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS)
 else ifeq ($(ARCH),arm64)
-	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -shared -Wl,-soname=libaicore.so -o $@ $^ $(LDFLAGS)
 else
 	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) -Wl,--out-implib,$(ALIB)
 endif

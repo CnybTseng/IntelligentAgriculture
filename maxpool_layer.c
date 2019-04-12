@@ -339,7 +339,7 @@ void forward_maxpool_layer_gpu(maxpool_layer *layer)
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
-	LOGD("GPU, maxpool_2x2: %fms.\n", duration);
+	ZLOGD("GPU, maxpool_2x2: %fms.\n", duration);
 #endif
 	clReleaseEvent(event);
 }

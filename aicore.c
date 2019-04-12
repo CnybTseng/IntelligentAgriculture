@@ -103,7 +103,7 @@ int ai_core_init(unsigned int width, unsigned int height)
 	cl_int errcode;
 	wrapper = cl_create_wrapper(&errcode);
 	if (CL_SUCCESS != errcode) {
-		LOGE("cl_create_wrapper fail, error code:%d.\n", errcode);
+		ZLOGE("cl_create_wrapper fail, error code:%d.\n", errcode);
 		core_param.init_status = AIC_OPENCL_INIT_FAIL;
 		return core_param.init_status;
 	}
@@ -112,6 +112,9 @@ int ai_core_init(unsigned int width, unsigned int height)
 	core_param.image_height = height;
 	core_param.roiw = 1000;
 	core_param.roih = 1000;
+	const int minimum = height < width ? height : width;
+	if (core_param.roiw > minimum) core_param.roiw = minimum;
+	if (core_param.roih > minimum) core_param.roih = minimum;
 	core_param.roix = (core_param.image_width - core_param.roiw) >> 1;
 	core_param.roiy = (core_param.image_height - core_param.roih) >> 1;
 	pthread_once(&core_create_once_control, &ai_core_init_routine);
@@ -305,7 +308,7 @@ int create_dnn_inference_thread()
 	
 	int ret = pthread_create(&core_param.dnn_inference_tid, &attr, dnn_inference_thread, NULL);
 	if (0 != ret) {
-		LOGE("pthread_create fail.\n");
+		ZLOGE("pthread_create fail.\n");
 		core_param.thread_status = THREAD_DEAD;
 		return -1;
 	}
@@ -502,7 +505,7 @@ void *dnn_inference_thread(void *param)
 		memcpy(core_param.object_queue_read_buffer, &bests, sizeof(list *));
 		unsigned int write_size = fifo_put(core_param.object_queue, core_param.object_queue_read_buffer, request_write);
 		if (write_size != request_write) {
-			LOGW("fifo_put fail.\n");
+			ZLOGW("fifo_put fail.\n");
 			free_detections(bests);
 		}
 
@@ -530,7 +533,7 @@ void *create_standard_image_object()
 	cl_int errcode;
 	cl_mem standard_image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, NULL, &errcode);
 	if (CL_SUCCESS != errcode) {
-		LOGE("clCreateImage fail, error code:%d.\n", errcode);
+		ZLOGE("clCreateImage fail, error code:%d.\n", errcode);
 		return 0;
 	}
 
@@ -539,7 +542,7 @@ void *create_standard_image_object()
 	float fill_color[] = {0.5f, 0.5f, 0.5f, 0};
 	clEnqueueFillImage(wrapper.command_queue, standard_image, fill_color, origin, region, 0, NULL, NULL);
 	if (CL_SUCCESS != errcode) {
-		LOGE("clEnqueueFillImage fail, error code:%d.\n", errcode);
+		ZLOGE("clEnqueueFillImage fail, error code:%d.\n", errcode);
 	}
 	
 	return standard_image;
@@ -570,7 +573,7 @@ cl_mem allocate_image_from_ion(int ion_filedesc, void *ion_hostptr, int width, i
 	cl_int errcode;
 	cl_mem image = clCreateImage(wrapper.context, mem_flags, &image_format, &image_desc, &ion_mem, &errcode);
 	if (CL_SUCCESS != errcode) {
-		LOGE("clCreateImage fail, error code:%d.\n", errcode);
+		ZLOGE("clCreateImage fail, error code:%d.\n", errcode);
 		return (void *)(0);
 	}
 	
@@ -593,7 +596,7 @@ int init_memory_pool()
 #endif
 		core_param.mempry_pool[i].busy = 0;
 		if (0 != pthread_mutex_init(&core_param.mempry_pool[i].mutex, NULL)) {
-			LOGE("pthread_mutex_init fail.\n");
+			ZLOGE("pthread_mutex_init fail.\n");
 			return AIC_ALLOCATE_FAIL;
 		}
 		core_param.mempry_pool[i].lock = pthread_mutex_lock;
@@ -646,10 +649,10 @@ void wait_for_thread_dead(pthread_t tid)
 	while (timer--) {
 		int ret = pthread_kill(tid, 0);
 		if (ESRCH == ret) {
-			LOGI("the thread didn't exists or already quit.\n");
+			ZLOGI("the thread didn't exists or already quit.\n");
 			return;
 		} else if (EINVAL == ret) {
-			LOGE("signal is invalid.\n");
+			ZLOGE("signal is invalid.\n");
 			return;
 		} else {
 			nanosleep(&req, NULL);
@@ -663,12 +666,12 @@ void clear_object_list()
 	const int request_size = roundup_power_of_2(sizeof(list *));
 	while (fifo_len(core_param.object_queue)) {
 		while (fifo_get(core_param.object_queue, core_param.object_queue_write_buffer, request_size) != request_size);
-		LOGI("clear object queue...\n");
+		ZLOGI("clear object queue...\n");
 		list *object_list = NULL;
 		memcpy(&object_list, core_param.object_queue_write_buffer, sizeof(list *));
 		free_detections(object_list);
 	}
-	LOGI("clear object queue over!\n");
+	ZLOGI("clear object queue over!\n");
 }
 
 void save_standard_image(void *image, int width, int height, const char *filename)
@@ -676,7 +679,7 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 #if !defined(OPENCL) || !defined(WINOGRAD_CONVOLUTION)
 	char *red = calloc(width * height, sizeof(unsigned char));
 	if (!red) {
-		LOGE("calloc fail.\n");
+		ZLOGE("calloc fail.\n");
 		return;
 	}
 	
@@ -692,7 +695,7 @@ void save_standard_image(void *image, int width, int height, const char *filenam
 #else
 	char *rgb24 = calloc(width * height * 3, sizeof(unsigned char));
 	if (!rgb24) {
-		LOGE("calloc fail.\n");
+		ZLOGE("calloc fail.\n");
 		return;
 	}
 

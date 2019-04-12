@@ -266,7 +266,7 @@ void transform_weight(weight_transform_context *context, float *weights, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	LOGD("GPU, weight_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
+	ZLOGD("GPU, weight_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
 #endif
 	clReleaseEvent(event);
 	
@@ -436,7 +436,7 @@ void transform_input(input_transform_context *context, float *transformed_input)
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	LOGD("GPU, input_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
+	ZLOGD("GPU, input_transform_f4x4_3x3: %fms, total %fms\n", duration, total);
 #endif
 	clReleaseEvent(event);
 	
@@ -573,9 +573,9 @@ void multiply_transformed_matrix(matrix_multiplication_context *context, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	LOGD("36x([%dx%d]x[%dx%d])\n", context->wtc->transformed_weight_image_height, context->wtc->transformed_weight_image_width / 36,
+	ZLOGD("36x([%dx%d]x[%dx%d])\n", context->wtc->transformed_weight_image_height, context->wtc->transformed_weight_image_width / 36,
 		context->itc->transformed_input_image_height / 36, context->itc->transformed_input_image_width);
-	LOGD("GPU, matrix_multiply[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
+	ZLOGD("GPU, matrix_multiply[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
 #endif
 	clReleaseEvent(event);
 	
@@ -726,7 +726,7 @@ void inverse_transform_output(output_inverse_transform_context *context, float *
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
 	total += duration;
-	LOGD("GPU, inverse_output_transform_f4x4_3x3[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
+	ZLOGD("GPU, inverse_output_transform_f4x4_3x3[%dx%d]: %fms, total %fms\n", global_work_size[0], global_work_size[1], duration, total);
 #endif
 	clReleaseEvent(event);	
 	

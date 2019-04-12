@@ -46,30 +46,30 @@ extern "C"
 #ifdef __ANDROID__
 #	define LOG_TAG "aicore"
 #	ifdef NDEBUG
-#		define LOGV(FMT, ...) __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+#		define ZLOGV(FMT, ...) __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, "[%s:%d:%s]:" FMT,	\
 			__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#		define LOGD(FMT, ...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+#		define ZLOGD(FMT, ...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "[%s:%d:%s]:" FMT,	\
 			__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#		define LOGI(FMT, ...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+#		define ZLOGI(FMT, ...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "[%s:%d:%s]:" FMT,	\
 			__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
 #	else
-#		define LOGV(FMT, ...)
-#		define LOGD(FMT, ...)
-#		define LOGI(FMT, ...)	
+#		define ZLOGV(FMT, ...)
+#		define ZLOGD(FMT, ...)
+#		define ZLOGI(FMT, ...)	
 #	endif
-#	define LOGW(FMT, ...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+#	define ZLOGW(FMT, ...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "[%s:%d:%s]:" FMT,	\
 		__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#	define LOGE(FMT, ...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+#	define ZLOGE(FMT, ...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "[%s:%d:%s]:" FMT,	\
 		__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#	define LOGF(FMT, ...) __android_log_print(ANDROID_LOG_FATAL, LOG_TAG, "[%s:%d:%s]:" FMT,	\
+#	define ZLOGF(FMT, ...) __android_log_print(ANDROID_LOG_FATAL, LOG_TAG, "[%s:%d:%s]:" FMT,	\
 		__FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
 #else
-#	define LOGV(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#	define LOGD(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#	define LOGI(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#	define LOGW(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#	define LOGE(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
-#	define LOGF(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define ZLOGV(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define ZLOGD(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define ZLOGI(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define ZLOGW(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define ZLOGE(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
+#	define ZLOGF(FMT, ...) fprintf(stderr, "[%s:%d:%s]:" FMT, __FILE__, __LINE__, __FUNCTION__, ## __VA_ARGS__)
 #endif
 
 #ifdef AICORE_BUILD_DLL

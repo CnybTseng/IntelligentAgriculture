@@ -283,7 +283,7 @@ void forward_resample_layer_gpu(resample_layer *layer)
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
-	LOGD("GPU, upsample: %fms.\n", duration);
+	ZLOGD("GPU, upsample: %fms.\n", duration);
 #endif
 	clReleaseEvent(event);
 }

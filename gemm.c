@@ -368,7 +368,7 @@ void gemm_nn_cl(gemm_context *context, int m, int n, int k, float alpha, float *
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	LOGD("gemm_nn_cl(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
+	ZLOGD("gemm_nn_cl(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 
@@ -501,7 +501,7 @@ void gemm_nn_cl_sm(gemm_context *context, int m, int n, int k, float alpha, floa
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	LOGD("gemm_nn_cl_sm: %f ms.\n", (end - start) * 1e-6f);
+	ZLOGD("gemm_nn_cl_sm: %f ms.\n", (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 
@@ -641,7 +641,7 @@ void gemm_nn_cl_tp(gemm_context *context, int m, int n, int k, float alpha, floa
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	LOGD("gemm_nn_cl_tp(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
+	ZLOGD("gemm_nn_cl_tp(|%dx%d|*|%dx%d|=>|%dx%d|*|%dx%d|): %f ms.\n", m, k, k, n, _m, _k, _k, _n, (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 	
@@ -792,7 +792,7 @@ void gemm_nn_cl_ion(gemm_context *context, int m, int n, int k, float alpha, flo
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	LOGD("gemm_nn_cl_ion: %f ms.\n", (end - start) * 1e-6f);
+	ZLOGD("gemm_nn_cl_ion: %f ms.\n", (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 	
@@ -933,7 +933,7 @@ void gemm_nt_cl(gemm_context *context, int m, int n, int k, float alpha, float *
 	clFinish(wrapper.command_queue);
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
-	LOGD("gemm_nt_cl: %f ms.\n", (end - start) * 1e-6f);
+	ZLOGD("gemm_nt_cl: %f ms.\n", (end - start) * 1e-6f);
 #endif
 	clReleaseEvent(event);
 	

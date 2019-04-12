@@ -874,7 +874,7 @@ void forward_convolutional_layer_1x1(convolutional_layer *layer)
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
-	LOGD("GPU, direct_convolution_1x1: %fms.\n", duration);
+	ZLOGD("GPU, direct_convolution_1x1: %fms.\n", duration);
 #endif
 	clReleaseEvent(event);
 }

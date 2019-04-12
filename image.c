@@ -814,10 +814,17 @@ void standardize_image(image_standardizer *standardizer, const unsigned char *co
 
 	for (int y = 0; y < standardizer->height; ++y) {
 		for (int x = 0; x < standardizer->width; ++x) {
+#ifdef USE_BMP
 			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2)]     = rgb24[y * width * 3 + x * 3 + 2];
 			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 1] = rgb24[y * width * 3 + x * 3 + 1];
 			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 2] = rgb24[y * width * 3 + x * 3 + 0];
 			h_input[(standardizer->height - 1 - y) * row_pitch + (x << 2) + 3] = 0;
+#else
+			h_input[y * row_pitch + (x << 2)]     = rgb24[((y * width + x) << 2) + 0];
+			h_input[y * row_pitch + (x << 2) + 1] = rgb24[((y * width + x) << 2) + 1];
+			h_input[y * row_pitch + (x << 2) + 2] = rgb24[((y * width + x) << 2) + 2];
+			h_input[y * row_pitch + (x << 2) + 3] = 0;
+#endif
 		}
 	}
 	
@@ -850,7 +857,7 @@ void standardize_image(image_standardizer *standardizer, const unsigned char *co
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
-	LOGD("GPU, normalize_image: %fms.\n", duration);
+	ZLOGD("GPU, normalize_image: %fms.\n", duration);
 #endif
 	clReleaseEvent(event);
 #else
@@ -895,7 +902,7 @@ void standardize_ion_image(image_standardizer *standardizer, void *input, unsign
 	errcode  = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, NULL);
 	errcode |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
 	float duration = (end - start) * 1e-6f;
-	LOGD("GPU, normalize_image: %fms.\n", duration);
+	ZLOGD("GPU, normalize_image: %fms.\n", duration);
 #endif
 	clReleaseEvent(event);
 #endif	
