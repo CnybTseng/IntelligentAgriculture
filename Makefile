@@ -114,10 +114,10 @@ ifeq ($(GPU),1)
 		CFLAGS+= -DUSE_FLOAT
 	endif
 	ifeq ($(ARCH),arm)
-		CFLAGS+= -D_ION
+		CFLAGS+= -DION
 	endif
 	ifeq ($(ARCH),arm64)
-		CFLAGS+= -D_ION
+		CFLAGS+= -DION
 	endif
 else ifeq ($(NNPACK),1)
 	CFLAGS+= -DNNPACK

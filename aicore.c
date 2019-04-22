@@ -110,11 +110,16 @@ int ai_core_init(unsigned int width, unsigned int height)
 #endif	
 	core_param.image_width = width;
 	core_param.image_height = height;
+#if 0
 	core_param.roiw = 1000;
 	core_param.roih = 1000;
 	const int minimum = height < width ? height : width;
 	if (core_param.roiw > minimum) core_param.roiw = minimum;
 	if (core_param.roih > minimum) core_param.roih = minimum;
+#else
+	core_param.roiw = core_param.image_width;
+	core_param.roih = core_param.image_height;
+#endif
 	core_param.roix = (core_param.image_width - core_param.roiw) >> 1;
 	core_param.roiy = (core_param.image_height - core_param.roih) >> 1;
 	pthread_once(&core_create_once_control, &ai_core_init_routine);
@@ -496,7 +501,16 @@ void *dnn_inference_thread(void *param)
 		}
 
 		memcpy(&standard_image, core_param.image_queue_write_buffer, sizeof(void *));
+#ifdef NDEBUG
+		struct timeval t1;
+		gettimeofday(&t1, NULL);
+#endif		
 		znet_inference(core_param.net, standard_image);
+#ifdef NDEBUG
+		struct timeval t2;
+		gettimeofday(&t2, NULL);
+		ZLOGI("znet_inference time:%fms.", ((double)t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_usec - t1.tv_usec) / 1000.0);
+#endif		
 		back_to_memory_pool(standard_image);
 		
 		list *detections = get_detections(core_param.net, core_param.threshold, core_param.roiw, core_param.roih);	
